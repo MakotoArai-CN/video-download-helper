@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频下载助手 - 哔哩哔哩
 // @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.1.0
+// @version      0.1.1
 // @description  纯本地的视频下载器，使用原生JavaScript对视频音频进行合并并输出，支持登录账号可以观看的最高分辨率视频下载（非破解，下载的清晰度等取决于账号权限），脚本仅供学习研究使用。
 // @author       Makoto
 // @match        *://www.bilibili.com/video/*
