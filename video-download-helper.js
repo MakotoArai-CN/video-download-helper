@@ -10,6 +10,7 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @icon         https://www.bilibili.com/favicon.ico
 // @grant        unsafeWindow
 // @connect      api.bilibili.com
 // @connect      bilivideo.com
