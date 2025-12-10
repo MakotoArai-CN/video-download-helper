@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频下载助手 - 哔哩哔哩
 // @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.1.1
+// @version      0.1.2
 // @description  纯本地的视频下载器，使用原生JavaScript对视频音频进行合并并输出，支持登录账号可以观看的最高分辨率视频下载（非破解，下载的清晰度等取决于账号权限），脚本仅供学习研究使用。
 // @author       Makoto
 // @match        *://www.bilibili.com/video/*
@@ -1252,12 +1252,33 @@
                     if (b.id !== a.id) return b.id - a.id;
                     return b.bandwidth - a.bandwidth;
                 });
+
                 for (var i = 0; i < sortedVideo.length; i++) {
-                    if (sortedVideo[i].id === targetQn) {
+                    if (sortedVideo[i].id === targetQn && sortedVideo[i].codecs?.startsWith('avc1')) {
                         video = sortedVideo[i];
                         break;
                     }
                 }
+
+                if (!video) {
+                    // eslint-disable-next-line no-redeclare
+                    for (var i = 0; i < sortedVideo.length; i++) {
+                        if (sortedVideo[i].id === targetQn) {
+                            video = sortedVideo[i];
+                            break;
+                        }
+                    }
+                }
+
+                if (!video) {
+                    for (var j = 0; j < sortedVideo.length; j++) {
+                        if (sortedVideo[j].id <= targetQn && sortedVideo[j].codecs?.startsWith('avc1')) {
+                            video = sortedVideo[j];
+                            break;
+                        }
+                    }
+                }
+
                 if (!video) {
                     for (var j = 0; j < sortedVideo.length; j++) {
                         if (sortedVideo[j].id <= targetQn) {
@@ -1266,6 +1287,7 @@
                         }
                     }
                 }
+
                 if (!video) {
                     video = sortedVideo[sortedVideo.length - 1];
                 }
@@ -1780,7 +1802,7 @@
         show: function () {
             var overlay = document.createElement('div');
             overlay.className = 'bdl-complete-overlay';
-            
+
             var html = '<div class="bdl-complete-container">' +
                 '<div class="bdl-complete-ripple"></div>' +
                 '<div class="bdl-complete-ripple"></div>' +
@@ -1792,7 +1814,7 @@
                 '</div>' +
                 '</div>' +
                 '<div class="bdl-complete-text">✨ 下载完成 ✨</div>';
-            
+
             overlay.innerHTML = html;
             document.body.appendChild(overlay);
 
@@ -1860,15 +1882,15 @@
                 var sparkle = document.createElement('div');
                 sparkle.className = 'bdl-sparkle';
                 var pos = positions[i];
-                
+
                 if (pos.top) sparkle.style.top = pos.top;
                 if (pos.bottom) sparkle.style.bottom = pos.bottom;
                 if (pos.left) sparkle.style.left = pos.left;
                 if (pos.right) sparkle.style.right = pos.right;
-                
+
                 sparkle.style.animationDelay = pos.delay + 's';
                 sparkle.style.animationDuration = pos.duration + 's';
-                
+
                 container.appendChild(sparkle);
             }
         },
@@ -2541,7 +2563,7 @@
             setTimeout(function () {
                 Downloader.refreshInfo();
             }, 500);
-            console.log('[video-download-helper] 初始化完成'+GM_info(version));
+            console.log('[video-download-helper] 初始化完成' + GM_info(version));
         });
     }
 
