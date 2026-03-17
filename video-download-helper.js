@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频下载助手 - 哔哩哔哩
 // @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.1.1
+// @version      0.1.2
 // @description  纯本地的视频下载器，使用原生JavaScript对视频音频进行合并并输出，支持登录账号可以观看的最高分辨率视频下载（非破解，下载的清晰度等取决于账号权限），脚本仅供学习研究使用。
 // @author       Makoto
 // @match        *://www.bilibili.com/video/*
@@ -18,6 +18,7 @@
 // @connect      bilivideo.net
 // @connect      akamaized.net
 // @connect      *
+// @require      https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.11.6/ffmpeg.min.js
 // @run-at       document-idle
 // @license      MIT
 // ==/UserScript==
@@ -41,8 +42,27 @@
             32: '480P 清晰',
             16: '360P 流畅'
         },
+        QUALITY_LIMIT: {
+            0: 32,
+            1: 80,
+            2: 127
+        },
+        VIDEO_CODEC_MAP: {
+            'avc1': 'H.264/AVC',
+            'hev1': 'H.265/HEVC',
+            'hvc1': 'H.265/HEVC',
+            'av01': 'AV1'
+        },
+        AUDIO_CODEC_MAP: {
+            30280: 'AAC 64K',
+            30232: 'AAC 132K',
+            30216: 'AAC 192K',
+            30250: 'AAC Dolby',
+            30251: 'FLAC'
+        },
         MERGE_METHODS: {
             JSMERGE: 'js-merge',
+            FFMPEG: 'ffmpeg-merge',
             SEPARATE: 'separate'
         }
     };
@@ -307,6 +327,30 @@
             gap: 5px;
         }
 
+        .bdl-vip-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            font-size: 10px;
+            border-radius: 4px;
+            font-weight: 600;
+            margin-left: 5px;
+        }
+
+        .bdl-vip-badge.guest {
+            background: #ccc;
+            color: #666;
+        }
+
+        .bdl-vip-badge.normal {
+            background: #ff9eb5;
+            color: white;
+        }
+
+        .bdl-vip-badge.vip {
+            background: #fb7299;
+            color: white;
+        }
+
         .bdl-section {
             margin-bottom: 18px;
         }
@@ -448,6 +492,48 @@
             cursor: not-allowed;
         }
 
+        .bdl-codec-selector {
+            margin-bottom: 18px;
+        }
+
+        .bdl-codec-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .bdl-codec-item {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .bdl-codec-label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        .bdl-codec-select {
+            padding: 8px 10px;
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            background: white;
+            font-size: 13px;
+            color: #333;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .bdl-codec-select:hover {
+            border-color: #00a1d6;
+        }
+
+        .bdl-codec-select:focus {
+            outline: none;
+            border-color: #00a1d6;
+        }
+
         .bdl-method-list {
             display: flex;
             flex-direction: column;
@@ -527,6 +613,39 @@
         .bdl-method-status.ready {
             background: #d4edda;
             color: #155724;
+        }
+
+        .bdl-method-status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .bdl-extra-downloads {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 18px;
+        }
+
+        .bdl-extra-btn {
+            flex: 1;
+            min-width: calc(50% - 4px);
+            padding: 10px;
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            background: white;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+
+        .bdl-extra-btn:hover {
+            border-color: #00a1d6;
+            color: #00a1d6;
         }
 
         .bdl-progress-section {
@@ -1000,6 +1119,22 @@
             opacity: 1;
             margin-bottom: 18px;
         }
+
+        #bdl-ugc-section {
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+                        opacity 0.3s ease, 
+                        margin-bottom 0.3s ease;
+            margin-bottom: 0;
+        }
+
+        #bdl-ugc-section.show {
+            max-height: 500px;
+            opacity: 1;
+            margin-bottom: 18px;
+        }
     `;
 
     const Utils = {
@@ -1059,6 +1194,18 @@
             return new Promise(function (resolve) {
                 setTimeout(resolve, ms);
             });
+        },
+
+        getCPUCores: function () {
+            return navigator.hardwareConcurrency || 2;
+        },
+
+        getOptimalThreads: function () {
+            var cores = this.getCPUCores();
+            if (cores <= 4) {
+                return 1;
+            }
+            return Math.floor(cores * 0.6 / 2) * 2;
         }
     };
 
@@ -1125,16 +1272,103 @@
                     }
                 });
             });
+        },
+
+        fetchFileWithProgress: function (url, onProgress) {
+            return fetch(url, {
+                headers: {
+                    'Referer': 'https://www.bilibili.com',
+                    'Origin': 'https://www.bilibili.com'
+                }
+            }).then(function (response) {
+                var reader = response.body.getReader();
+                var contentLength = parseInt(response.headers.get('Content-Length'));
+
+                if (!contentLength) {
+                    return response.arrayBuffer().then(function (data) {
+                        return new Uint8Array(data);
+                    });
+                }
+
+                var receivedLength = 0;
+                var chunks = [];
+
+                function processChunk(result) {
+                    if (result.done) {
+                        var totalLength = 0;
+                        for (var i = 0; i < chunks.length; i++) {
+                            totalLength += chunks[i].length;
+                        }
+                        var combined = new Uint8Array(totalLength);
+                        var position = 0;
+                        for (var j = 0; j < chunks.length; j++) {
+                            combined.set(chunks[j], position);
+                            position += chunks[j].length;
+                        }
+                        return combined;
+                    }
+
+                    chunks.push(result.value);
+                    receivedLength += result.value.length;
+
+                    if (onProgress) {
+                        onProgress(receivedLength, contentLength);
+                    }
+
+                    return reader.read().then(processChunk);
+                }
+
+                return reader.read().then(processChunk);
+            });
         }
     };
 
     const BiliAPI = {
+        userVipType: 0,
+
+        getUserInfo: function () {
+            var self = this;
+            return Network.fetchJSON('https://api.bilibili.com/x/web-interface/nav').then(function (res) {
+                if (res.code === 0 && res.data) {
+                    if (res.data.vipStatus === 1 && res.data.vipType === 2) {
+                        self.userVipType = 2;
+                    } else if (res.data.isLogin) {
+                        self.userVipType = 1;
+                    } else {
+                        self.userVipType = 0;
+                    }
+                }
+                return self.userVipType;
+            }).catch(function () {
+                self.userVipType = 0;
+                return 0;
+            });
+        },
+
         getVideoInfo: function (bvid) {
             return Network.fetchJSON('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid).then(function (res) {
                 if (res.code !== 0) {
                     throw new Error(res.message || '获取视频信息失败');
                 }
                 return res.data;
+            });
+        },
+
+        getUGCSeasonInfo: function (bvid) {
+            return Network.fetchJSON('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid).then(function (res) {
+                if (res.code !== 0) {
+                    throw new Error(res.message || '获取合集信息失败');
+                }
+                var data = res.data;
+                if (data.ugc_season) {
+                    return {
+                        hasUGC: true,
+                        title: data.ugc_season.title,
+                        episodes: data.ugc_season.sections[0].episodes,
+                        cover: data.ugc_season.cover
+                    };
+                }
+                return { hasUGC: false };
             });
         },
 
@@ -1204,7 +1438,8 @@
                     duration: totalDuration,
                     desc: result.evaluate || '',
                     currentPage: currentIndex + 1,
-                    type: 'bangumi'
+                    type: 'bangumi',
+                    cover: result.cover
                 };
             });
         },
@@ -1225,20 +1460,130 @@
             });
         },
 
+        getSubtitles: function (bvid, cid) {
+            return Network.fetchJSON('https://api.bilibili.com/x/player/v2?bvid=' + bvid + '&cid=' + cid).then(function (res) {
+                if (res.code === 0 && res.data && res.data.subtitle && res.data.subtitle.subtitles) {
+                    return res.data.subtitle.subtitles;
+                }
+                return [];
+            }).catch(function () {
+                return [];
+            });
+        },
+
+        getDanmaku: function (cid) {
+            return new Promise(function (resolve, reject) {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: 'https://api.bilibili.com/x/v1/dm/list.so?oid=' + cid,
+                    onload: function (res) {
+                        if (res.status >= 200 && res.status < 300) {
+                            resolve(res.responseText);
+                        } else {
+                            reject(new Error('获取弹幕失败'));
+                        }
+                    },
+                    onerror: function () {
+                        reject(new Error('获取弹幕网络错误'));
+                    }
+                });
+            });
+        },
+
         getAvailableQualities: function (playData) {
             var list = [];
+            var userLimit = CONFIG.QUALITY_LIMIT[this.userVipType] || 32;
+
             if (playData.accept_quality && playData.accept_description) {
                 for (var i = 0; i < playData.accept_quality.length; i++) {
+                    var qn = playData.accept_quality[i];
+                    var available = qn <= userLimit;
                     list.push({
-                        qn: playData.accept_quality[i],
-                        desc: playData.accept_description[i] || CONFIG.QUALITY_MAP[playData.accept_quality[i]] || playData.accept_quality[i] + 'P'
+                        qn: qn,
+                        desc: playData.accept_description[i] || CONFIG.QUALITY_MAP[qn] || qn + 'P',
+                        available: available
                     });
                 }
             }
             return list;
         },
 
-        getStreams: function (playData, targetQn) {
+        getVideoCodecs: function (playData) {
+            var dash = playData.dash;
+            if (!dash || !dash.video) {
+                return [];
+            }
+
+            var codecsMap = {};
+            for (var i = 0; i < dash.video.length; i++) {
+                var video = dash.video[i];
+                var codecType = video.codecs.split('.')[0];
+                if (!codecsMap[codecType]) {
+                    codecsMap[codecType] = {
+                        type: codecType,
+                        name: CONFIG.VIDEO_CODEC_MAP[codecType] || codecType,
+                        videos: []
+                    };
+                }
+                codecsMap[codecType].videos.push(video);
+            }
+
+            var codecs = [];
+            for (var key in codecsMap) {
+                if (codecsMap.hasOwnProperty(key)) {
+                    codecs.push(codecsMap[key]);
+                }
+            }
+
+            codecs.sort(function (a, b) {
+                var order = { 'avc1': 0, 'hev1': 1, 'hvc1': 1, 'av01': 2 };
+                return (order[a.type] || 99) - (order[b.type] || 99);
+            });
+
+            return codecs;
+        },
+
+        getAudioCodecs: function (playData) {
+            var dash = playData.dash;
+            if (!dash) {
+                return [];
+            }
+
+            var codecs = [];
+            if (dash.audio && dash.audio.length > 0) {
+                for (var i = 0; i < dash.audio.length; i++) {
+                    codecs.push({
+                        id: dash.audio[i].id,
+                        name: CONFIG.AUDIO_CODEC_MAP[dash.audio[i].id] || 'AAC',
+                        data: dash.audio[i]
+                    });
+                }
+            }
+
+            if (dash.dolby && dash.dolby.audio && dash.dolby.audio.length > 0) {
+                codecs.push({
+                    id: 30250,
+                    name: 'Dolby Atmos',
+                    data: dash.dolby.audio[0]
+                });
+            }
+
+            if (dash.flac && dash.flac.audio) {
+                codecs.push({
+                    id: 30251,
+                    name: 'FLAC',
+                    data: dash.flac.audio
+                });
+            }
+
+            codecs.sort(function (a, b) {
+                return b.data.bandwidth - a.data.bandwidth;
+            });
+
+            return codecs;
+        },
+
+        getStreams: function (playData, targetQn, videoCodec, audioCodec) {
             var dash = playData.dash;
             if (!dash) {
                 throw new Error('该视频不支持DASH格式');
@@ -1252,42 +1597,92 @@
                     if (b.id !== a.id) return b.id - a.id;
                     return b.bandwidth - a.bandwidth;
                 });
-                for (var i = 0; i < sortedVideo.length; i++) {
-                    if (sortedVideo[i].id === targetQn) {
-                        video = sortedVideo[i];
-                        break;
+
+                if (videoCodec) {
+                    for (var i = 0; i < sortedVideo.length; i++) {
+                        var codecType = sortedVideo[i].codecs.split('.')[0];
+                        if (sortedVideo[i].id === targetQn && codecType === videoCodec) {
+                            video = sortedVideo[i];
+                            break;
+                        }
                     }
                 }
+
                 if (!video) {
                     for (var j = 0; j < sortedVideo.length; j++) {
-                        if (sortedVideo[j].id <= targetQn) {
+                        if (sortedVideo[j].id === targetQn && sortedVideo[j].codecs && sortedVideo[j].codecs.indexOf('avc1') === 0) {
                             video = sortedVideo[j];
                             break;
                         }
                     }
                 }
+
+                if (!video) {
+                    for (var k = 0; k < sortedVideo.length; k++) {
+                        if (sortedVideo[k].id === targetQn) {
+                            video = sortedVideo[k];
+                            break;
+                        }
+                    }
+                }
+
+                if (!video) {
+                    for (var l = 0; l < sortedVideo.length; l++) {
+                        if (sortedVideo[l].id <= targetQn && sortedVideo[l].codecs && sortedVideo[l].codecs.indexOf('avc1') === 0) {
+                            video = sortedVideo[l];
+                            break;
+                        }
+                    }
+                }
+
+                if (!video) {
+                    for (var m = 0; m < sortedVideo.length; m++) {
+                        if (sortedVideo[m].id <= targetQn) {
+                            video = sortedVideo[m];
+                            break;
+                        }
+                    }
+                }
+
                 if (!video) {
                     video = sortedVideo[sortedVideo.length - 1];
                 }
             }
 
-            if (dash.audio && dash.audio.length > 0) {
-                var sortedAudio = dash.audio.slice().sort(function (a, b) {
-                    return b.bandwidth - a.bandwidth;
-                });
-                audio = sortedAudio[0];
-            }
-
-            if (dash.dolby && dash.dolby.audio && dash.dolby.audio[0]) {
-                var dolby = dash.dolby.audio[0];
-                if (!audio || dolby.bandwidth > audio.bandwidth) {
-                    audio = dolby;
+            if (audioCodec) {
+                if (audioCodec === 30250 && dash.dolby && dash.dolby.audio && dash.dolby.audio[0]) {
+                    audio = dash.dolby.audio[0];
+                } else if (audioCodec === 30251 && dash.flac && dash.flac.audio) {
+                    audio = dash.flac.audio;
+                } else if (dash.audio && dash.audio.length > 0) {
+                    for (var n = 0; n < dash.audio.length; n++) {
+                        if (dash.audio[n].id === audioCodec) {
+                            audio = dash.audio[n];
+                            break;
+                        }
+                    }
                 }
             }
 
-            if (dash.flac && dash.flac.audio) {
-                if (!audio || dash.flac.audio.bandwidth > audio.bandwidth) {
-                    audio = dash.flac.audio;
+            if (!audio) {
+                if (dash.audio && dash.audio.length > 0) {
+                    var sortedAudio = dash.audio.slice().sort(function (a, b) {
+                        return b.bandwidth - a.bandwidth;
+                    });
+                    audio = sortedAudio[0];
+                }
+
+                if (dash.dolby && dash.dolby.audio && dash.dolby.audio[0]) {
+                    var dolby = dash.dolby.audio[0];
+                    if (!audio || dolby.bandwidth > audio.bandwidth) {
+                        audio = dolby;
+                    }
+                }
+
+                if (dash.flac && dash.flac.audio) {
+                    if (!audio || dash.flac.audio.bandwidth > audio.bandwidth) {
+                        audio = dash.flac.audio;
+                    }
                 }
             }
 
@@ -1734,6 +2129,72 @@
         }
     };
 
+    const FFmpegMerger = {
+        name: 'FFmpeg合并',
+        status: 'loading',
+        ffmpeg: null,
+
+        init: function () {
+            var self = this;
+            if (typeof FFmpeg === 'undefined') {
+                self.status = 'unavailable';
+                return Promise.reject(new Error('FFmpeg未加载'));
+            }
+
+            if (!self.ffmpeg) {
+                self.ffmpeg = FFmpeg.createFFmpeg({ log: false });
+            }
+
+            if (!self.ffmpeg.isLoaded()) {
+                self.status = 'loading';
+                return self.ffmpeg.load().then(function () {
+                    self.status = 'ready';
+                    return true;
+                }).catch(function (error) {
+                    self.status = 'error';
+                    throw error;
+                });
+            }
+
+            self.status = 'ready';
+            return Promise.resolve(true);
+        },
+
+        merge: function (videoBuffer, audioBuffer, metadata) {
+            var self = this;
+            return this.init().then(function () {
+                var videoData = new Uint8Array(videoBuffer);
+                var audioData = new Uint8Array(audioBuffer);
+
+                self.ffmpeg.FS('writeFile', 'video.mp4', videoData);
+                self.ffmpeg.FS('writeFile', 'audio.m4a', audioData);
+
+                return self.ffmpeg.run(
+                    '-i', 'video.mp4',
+                    '-i', 'audio.m4a',
+                    '-c', 'copy',
+                    '-map', '0:v:0',
+                    '-map', '1:a:0',
+                    '-metadata', 'title=' + (metadata.title || ''),
+                    '-metadata', 'artist=' + (metadata.author || ''),
+                    '-metadata', 'comment=' + LEARNING_DISCLAIMER,
+                    'output.mp4'
+                );
+            }).then(function () {
+                var data = self.ffmpeg.FS('readFile', 'output.mp4');
+
+                try {
+                    self.ffmpeg.FS('unlink', 'video.mp4');
+                    self.ffmpeg.FS('unlink', 'audio.m4a');
+                    self.ffmpeg.FS('unlink', 'output.mp4');
+                } catch (e) {
+                    console.warn('清理临时文件失败:', e);
+                }
+
+                return data.buffer;
+            });
+        }
+    };
     const MergeManager = {
         currentMethod: CONFIG.MERGE_METHODS.JSMERGE,
 
@@ -1744,6 +2205,12 @@
                 handler: JSMerger,
                 recommended: true
             },
+            'ffmpeg-merge': {
+                name: 'FFmpeg合并',
+                desc: '使用FFmpeg进行专业合并',
+                handler: FFmpegMerger,
+                recommended: false
+            },
             'separate': {
                 name: '分离下载',
                 desc: '分别保存视频和音频文件',
@@ -1753,6 +2220,14 @@
 
         setMethod: function (method) {
             this.currentMethod = method;
+        },
+
+        getMethodStatus: function (method) {
+            if (method === CONFIG.MERGE_METHODS.SEPARATE) {
+                return 'ready';
+            }
+            var handler = this.methods[method].handler;
+            return handler ? handler.status : 'unavailable';
         },
 
         merge: function (videoBuffer, audioBuffer, metadata) {
@@ -1780,7 +2255,7 @@
         show: function () {
             var overlay = document.createElement('div');
             overlay.className = 'bdl-complete-overlay';
-            
+
             var html = '<div class="bdl-complete-container">' +
                 '<div class="bdl-complete-ripple"></div>' +
                 '<div class="bdl-complete-ripple"></div>' +
@@ -1792,7 +2267,7 @@
                 '</div>' +
                 '</div>' +
                 '<div class="bdl-complete-text">✨ 下载完成 ✨</div>';
-            
+
             overlay.innerHTML = html;
             document.body.appendChild(overlay);
 
@@ -1860,15 +2335,15 @@
                 var sparkle = document.createElement('div');
                 sparkle.className = 'bdl-sparkle';
                 var pos = positions[i];
-                
+
                 if (pos.top) sparkle.style.top = pos.top;
                 if (pos.bottom) sparkle.style.bottom = pos.bottom;
                 if (pos.left) sparkle.style.left = pos.left;
                 if (pos.right) sparkle.style.right = pos.right;
-                
+
                 sparkle.style.animationDelay = pos.delay + 's';
                 sparkle.style.animationDuration = pos.duration + 's';
-                
+
                 container.appendChild(sparkle);
             }
         },
@@ -1885,13 +2360,106 @@
         }
     };
 
+    const ThreadManager = {
+        maxThreads: 1,
+        activeThreads: 0,
+        queue: [],
+
+        init: function () {
+            var cores = Utils.getCPUCores();
+            if (cores <= 4) {
+                this.maxThreads = 1;
+            } else {
+                this.maxThreads = Math.floor(cores * 0.6);
+                if (this.maxThreads % 2 !== 0) {
+                    this.maxThreads = this.maxThreads - 1;
+                }
+            }
+            console.log('线程管理器初始化，最大线程数:', this.maxThreads);
+        },
+
+        canRunTask: function () {
+            return this.activeThreads < this.maxThreads;
+        },
+
+        runTask: function (task) {
+            var self = this;
+            if (this.canRunTask()) {
+                this.activeThreads++;
+                return task().finally(function () {
+                    self.activeThreads--;
+                    self.processQueue();
+                });
+            } else {
+                return new Promise(function (resolve, reject) {
+                    self.queue.push(function () {
+                        return task().then(resolve).catch(reject);
+                    });
+                });
+            }
+        },
+
+        processQueue: function () {
+            if (this.queue.length > 0 && this.canRunTask()) {
+                var nextTask = this.queue.shift();
+                this.activeThreads++;
+                var self = this;
+                nextTask().finally(function () {
+                    self.activeThreads--;
+                    self.processQueue();
+                });
+            }
+        },
+
+        downloadWithThread: function (videoUrl, audioUrl, onVideoProgress, onAudioProgress) {
+            var self = this;
+            var videoPromise = null;
+            var audioPromise = null;
+
+            if (this.maxThreads > 1) {
+                videoPromise = this.runTask(function () {
+                    return Network.downloadBuffer(videoUrl, onVideoProgress);
+                });
+
+                if (audioUrl) {
+                    audioPromise = this.runTask(function () {
+                        return Network.downloadBuffer(audioUrl, onAudioProgress);
+                    });
+                }
+            } else {
+                videoPromise = Network.downloadBuffer(videoUrl, onVideoProgress);
+                if (audioUrl) {
+                    audioPromise = videoPromise.then(function () {
+                        return Network.downloadBuffer(audioUrl, onAudioProgress);
+                    });
+                }
+            }
+
+            return Promise.all([
+                videoPromise,
+                audioPromise || Promise.resolve(null)
+            ]).then(function (results) {
+                return {
+                    videoBuffer: results[0],
+                    audioBuffer: results[1]
+                };
+            });
+        }
+    };
+
     const Downloader = {
         isDownloading: false,
         videoInfo: null,
         playData: null,
         selectedQuality: 80,
         selectedPages: [],
+        selectedUGCEpisodes: [],
         videoType: 'video',
+        selectedVideoCodec: null,
+        selectedAudioCodec: null,
+        availableSubtitles: [],
+        hasDanmaku: false,
+        coverUrl: null,
 
         refreshInfo: function () {
             var self = this;
@@ -1903,53 +2471,97 @@
 
             self.videoType = videoId.type;
 
-            var infoPromise;
-            if (videoId.type === 'bangumi') {
-                infoPromise = BiliAPI.getBangumiInfo(videoId.id);
-            } else {
-                infoPromise = BiliAPI.getVideoInfo(videoId.id);
-            }
-
-            return infoPromise.then(function (videoInfo) {
-                self.videoInfo = videoInfo;
-                var page = videoInfo.currentPage || Utils.getCurrentPage();
-                var pageInfo = videoInfo.pages[page - 1];
-
-                if (!pageInfo) {
-                    UI.showAlert('无法获取分P信息', 'error');
-                    return;
-                }
-
-                var playParams = {
-                    type: videoId.type,
-                    cid: pageInfo.cid,
-                    qn: 127
-                };
-
+            return BiliAPI.getUserInfo().then(function () {
+                var infoPromise;
                 if (videoId.type === 'bangumi') {
-                    playParams.ep_id = pageInfo.ep_id;
+                    infoPromise = BiliAPI.getBangumiInfo(videoId.id);
                 } else {
-                    playParams.bvid = videoId.id;
+                    infoPromise = BiliAPI.getVideoInfo(videoId.id);
                 }
 
-                return BiliAPI.getPlayUrl(playParams).then(function (playData) {
-                    self.playData = playData;
-                    var qualities = BiliAPI.getAvailableQualities(playData);
+                return infoPromise.then(function (videoInfo) {
+                    self.videoInfo = videoInfo;
+                    self.coverUrl = videoInfo.pic || videoInfo.cover;
 
-                    UI.updateVideoInfo(videoInfo, pageInfo);
-                    UI.updateQualities(qualities, playData.quality);
-
-                    if (videoInfo.pages.length > 1) {
-                        UI.preparePagesSection(videoInfo.pages, page - 1);
-                        self.selectedPages = [page - 1];
-                    } else {
-                        UI.hidePagesSection();
-                        self.selectedPages = [0];
+                    var ugcPromise = Promise.resolve({ hasUGC: false });
+                    if (videoId.type === 'video') {
+                        ugcPromise = BiliAPI.getUGCSeasonInfo(videoId.id);
                     }
 
-                    if (qualities.length > 0) {
-                        self.selectedQuality = qualities[0].qn;
-                    }
+                    return ugcPromise.then(function (ugcInfo) {
+                        var page = videoInfo.currentPage || Utils.getCurrentPage();
+                        var pageInfo = videoInfo.pages[page - 1];
+
+                        if (!pageInfo) {
+                            UI.showAlert('无法获取分P信息', 'error');
+                            return;
+                        }
+
+                        var playParams = {
+                            type: videoId.type,
+                            cid: pageInfo.cid,
+                            qn: 127
+                        };
+
+                        if (videoId.type === 'bangumi') {
+                            playParams.ep_id = pageInfo.ep_id;
+                        } else {
+                            playParams.bvid = videoId.id;
+                        }
+
+                        var playDataPromise = BiliAPI.getPlayUrl(playParams);
+                        var subtitlesPromise = BiliAPI.getSubtitles(videoId.id, pageInfo.cid);
+
+                        return Promise.all([playDataPromise, subtitlesPromise]).then(function (results) {
+                            var playData = results[0];
+                            var subtitles = results[1];
+
+                            self.playData = playData;
+                            self.availableSubtitles = subtitles;
+                            self.hasDanmaku = true;
+
+                            var qualities = BiliAPI.getAvailableQualities(playData);
+                            var videoCodecs = BiliAPI.getVideoCodecs(playData);
+                            var audioCodecs = BiliAPI.getAudioCodecs(playData);
+
+                            UI.updateVideoInfo(videoInfo, pageInfo, BiliAPI.userVipType);
+                            UI.updateQualities(qualities, playData.quality);
+                            UI.updateCodecSelectors(videoCodecs, audioCodecs);
+
+                            if (videoCodecs.length > 0) {
+                                self.selectedVideoCodec = videoCodecs[0].type;
+                            }
+                            if (audioCodecs.length > 0) {
+                                self.selectedAudioCodec = audioCodecs[0].id;
+                            }
+
+                            if (videoInfo.pages.length > 1) {
+                                UI.preparePagesSection(videoInfo.pages, page - 1);
+                                self.selectedPages = [page - 1];
+                            } else {
+                                UI.hidePagesSection();
+                                self.selectedPages = [0];
+                            }
+
+                            if (ugcInfo.hasUGC) {
+                                UI.prepareUGCSection(ugcInfo.episodes);
+                                self.selectedUGCEpisodes = [];
+                            } else {
+                                UI.hideUGCSection();
+                            }
+
+                            UI.updateExtraDownloads(subtitles.length > 0, self.hasDanmaku, self.coverUrl);
+
+                            if (qualities.length > 0) {
+                                for (var i = 0; i < qualities.length; i++) {
+                                    if (qualities[i].available) {
+                                        self.selectedQuality = qualities[i].qn;
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    });
                 });
             }).catch(function (error) {
                 console.error('获取视频信息失败:', error);
@@ -1961,8 +2573,9 @@
             var self = this;
             if (this.isDownloading) return;
 
-            if (this.selectedPages.length === 0) {
-                UI.showAlert('请至少选择一个分P', 'warning');
+            var totalTasks = this.selectedPages.length + this.selectedUGCEpisodes.length;
+            if (totalTasks === 0) {
+                UI.showAlert('请至少选择一个分P或合集视频', 'warning');
                 return;
             }
 
@@ -1971,8 +2584,28 @@
             UI.showProgress(true);
             UI.hideAlert();
 
+            var allTasks = [];
+
+            for (var i = 0; i < this.selectedPages.length; i++) {
+                var pageIndex = this.selectedPages[i];
+                allTasks.push({
+                    type: 'page',
+                    index: pageIndex,
+                    data: this.videoInfo.pages[pageIndex]
+                });
+            }
+
+            for (var j = 0; j < this.selectedUGCEpisodes.length; j++) {
+                var episodeIndex = this.selectedUGCEpisodes[j];
+                allTasks.push({
+                    type: 'ugc',
+                    index: episodeIndex,
+                    data: this.videoInfo.ugcEpisodes[episodeIndex]
+                });
+            }
+
             var downloadNext = function (index) {
-                if (index >= self.selectedPages.length) {
+                if (index >= allTasks.length) {
                     UI.showAlert('全部下载完成！', 'success');
                     CompleteEffect.show();
                     self.isDownloading = false;
@@ -1986,15 +2619,16 @@
                     return;
                 }
 
-                var pageIndex = self.selectedPages[index];
-                var pageInfo = self.videoInfo.pages[pageIndex];
+                var task = allTasks[index];
+                var taskInfo = task.data;
 
-                if (self.selectedPages.length > 1) {
-                    UI.showAlert('正在下载 ' + (index + 1) + '/' + self.selectedPages.length + ': ' + (pageInfo.part || pageInfo.page), 'info');
+                if (allTasks.length > 1) {
+                    var taskName = task.type === 'page' ? taskInfo.part : taskInfo.title;
+                    UI.showAlert('正在下载 ' + (index + 1) + '/' + allTasks.length + ': ' + (taskName || taskInfo.page), 'info');
                 }
 
-                self.downloadSinglePage(pageInfo).then(function () {
-                    if (index < self.selectedPages.length - 1) {
+                self.downloadSinglePage(taskInfo).then(function () {
+                    if (index < allTasks.length - 1) {
                         return Utils.delay(1000).then(function () {
                             downloadNext(index + 1);
                         });
@@ -2037,7 +2671,12 @@
             }
 
             return BiliAPI.getPlayUrl(playParams).then(function (playData) {
-                var streams = BiliAPI.getStreams(playData, self.selectedQuality);
+                var streams = BiliAPI.getStreams(
+                    playData,
+                    self.selectedQuality,
+                    self.selectedVideoCodec,
+                    self.selectedAudioCodec
+                );
 
                 if (!streams.video) {
                     throw new Error('无法获取视频流');
@@ -2049,26 +2688,29 @@
                 UI.updateProgress('video', 0, '下载视频...');
                 UI.updateCircleProgress(0);
 
-                return Network.downloadBuffer(videoUrl, function (loaded, total) {
-                    var pct = Math.round(loaded / total * 100);
-                    UI.updateProgress('video', pct);
-                    UI.updateCircleProgress(pct * 0.4);
-                }).then(function (videoBuffer) {
-                    UI.updateProgress('video', 100);
-
-                    if (!audioUrl) {
-                        return { videoBuffer: videoBuffer, audioBuffer: null };
-                    }
-
-                    UI.updateProgress('audio', 0, '下载音频...');
-                    return Network.downloadBuffer(audioUrl, function (loaded, total) {
+                return ThreadManager.downloadWithThread(
+                    videoUrl,
+                    audioUrl,
+                    function (loaded, total) {
+                        var pct = Math.round(loaded / total * 100);
+                        UI.updateProgress('video', pct);
+                        if (!audioUrl) {
+                            UI.updateCircleProgress(pct);
+                        } else {
+                            UI.updateCircleProgress(pct * 0.4);
+                        }
+                    },
+                    function (loaded, total) {
                         var pct = Math.round(loaded / total * 100);
                         UI.updateProgress('audio', pct);
                         UI.updateCircleProgress(40 + pct * 0.4);
-                    }).then(function (audioBuffer) {
+                    }
+                ).then(function (buffers) {
+                    UI.updateProgress('video', 100);
+                    if (buffers.audioBuffer) {
                         UI.updateProgress('audio', 100);
-                        return { videoBuffer: videoBuffer, audioBuffer: audioBuffer };
-                    });
+                    }
+                    return buffers;
                 });
             }).then(function (buffers) {
                 var metadata = {
@@ -2109,6 +2751,130 @@
             });
         },
 
+        downloadCover: function () {
+            var self = this;
+            if (!this.coverUrl) {
+                UI.showAlert('没有找到封面', 'warning');
+                return;
+            }
+
+            UI.showAlert('正在下载封面...', 'info');
+
+            fetch(this.coverUrl)
+                .then(function (response) {
+                    return response.blob();
+                })
+                .then(function (blob) {
+                    var ext = self.coverUrl.match(/\.(jpg|jpeg|png|webp)($|\?)/i);
+                    var extension = ext ? ext[1] : 'jpg';
+                    var filename = Utils.sanitizeFilename(self.videoInfo.title) + '_cover.' + extension;
+                    self.saveFile(blob, filename);
+                    UI.showAlert('封面下载完成', 'success');
+                })
+                .catch(function (error) {
+                    console.error('下载封面失败:', error);
+                    UI.showAlert('下载封面失败: ' + error.message, 'error');
+                });
+        },
+
+        downloadSubtitles: function () {
+            var self = this;
+            if (this.availableSubtitles.length === 0) {
+                UI.showAlert('没有可用的字幕', 'warning');
+                return;
+            }
+
+            UI.showAlert('正在下载字幕...', 'info');
+
+            var promises = [];
+            for (var i = 0; i < this.availableSubtitles.length; i++) {
+                var subtitle = this.availableSubtitles[i];
+                var subUrl = subtitle.subtitle_url;
+                if (subUrl.indexOf('http') !== 0) {
+                    subUrl = 'https:' + subUrl;
+                }
+
+                promises.push(
+                    fetch(subUrl)
+                        .then(function (response) {
+                            return response.json();
+                        })
+                        .then(function (data) {
+                            return {
+                                lan: subtitle.lan_doc || subtitle.lan,
+                                data: data
+                            };
+                        })
+                );
+            }
+
+            Promise.all(promises).then(function (results) {
+                for (var j = 0; j < results.length; j++) {
+                    var result = results[j];
+                    var srtContent = self.convertJsonToSrt(result.data);
+                    var blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+                    var filename = Utils.sanitizeFilename(self.videoInfo.title) + '_' + result.lan + '.srt';
+                    self.saveFile(blob, filename);
+                }
+                UI.showAlert('字幕下载完成', 'success');
+            }).catch(function (error) {
+                console.error('下载字幕失败:', error);
+                UI.showAlert('下载字幕失败: ' + error.message, 'error');
+            });
+        },
+
+        downloadDanmaku: function () {
+            var self = this;
+            var page = this.videoInfo.currentPage || Utils.getCurrentPage();
+            var pageInfo = this.videoInfo.pages[page - 1];
+
+            UI.showAlert('正在下载弹幕...', 'info');
+
+            BiliAPI.getDanmaku(pageInfo.cid).then(function (xmlData) {
+                var blob = new Blob([xmlData], { type: 'text/xml;charset=utf-8' });
+                var filename = Utils.sanitizeFilename(self.videoInfo.title);
+                if (self.videoInfo.pages.length > 1 && pageInfo.part) {
+                    filename += ' - ' + pageInfo.part;
+                }
+                filename += '.xml';
+                self.saveFile(blob, filename);
+                UI.showAlert('弹幕下载完成', 'success');
+            }).catch(function (error) {
+                console.error('下载弹幕失败:', error);
+                UI.showAlert('下载弹幕失败: ' + error.message, 'error');
+            });
+        },
+
+        convertJsonToSrt: function (jsonData) {
+            var srtContent = '';
+            if (jsonData.body && Array.isArray(jsonData.body)) {
+                for (var i = 0; i < jsonData.body.length; i++) {
+                    var item = jsonData.body[i];
+                    var index = i + 1;
+                    var startTime = this.formatSrtTime(item.from);
+                    var endTime = this.formatSrtTime(item.to);
+                    var text = item.content;
+
+                    srtContent += index + '\n';
+                    srtContent += startTime + ' --> ' + endTime + '\n';
+                    srtContent += text + '\n\n';
+                }
+            }
+            return srtContent;
+        },
+
+        formatSrtTime: function (seconds) {
+            var h = Math.floor(seconds / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var s = Math.floor(seconds % 60);
+            var ms = Math.floor((seconds % 1) * 1000);
+
+            return String(h).padStart(2, '0') + ':' +
+                String(m).padStart(2, '0') + ':' +
+                String(s).padStart(2, '0') + ',' +
+                String(ms).padStart(3, '0');
+        },
+
         saveSeparate: function (videoBuffer, audioBuffer, filename) {
             var self = this;
             this.saveFile(videoBuffer, filename + '_video.mp4');
@@ -2118,7 +2884,12 @@
         },
 
         saveFile: function (buffer, filename) {
-            var blob = new Blob([buffer], { type: 'video/mp4' });
+            var blob;
+            if (buffer instanceof Blob) {
+                blob = buffer;
+            } else {
+                blob = new Blob([buffer], { type: 'video/mp4' });
+            }
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
             a.href = url;
@@ -2136,6 +2907,7 @@
     const UI = {
         elements: {},
         pagesSectionEnabled: false,
+        ugcSectionEnabled: false,
 
         init: function () {
             GM_addStyle(STYLES);
@@ -2161,6 +2933,7 @@
                 '<div class="bdl-info-meta">' +
                 '<span class="bdl-info-meta-item" id="bdl-author"><span>👤</span><span>--</span></span>' +
                 '<span class="bdl-info-meta-item" id="bdl-duration"><span>⏱</span><span>--</span></span>' +
+                '<span class="bdl-info-meta-item" id="bdl-vip"></span>' +
                 '</div>' +
                 '</div>' +
                 '<div class="bdl-section" id="bdl-pages-section">' +
@@ -2175,9 +2948,34 @@
                 '<button id="bdl-select-reverse">反选</button>' +
                 '</div>' +
                 '</div>' +
+                '<div class="bdl-section" id="bdl-ugc-section">' +
+                '<div class="bdl-section-header">' +
+                '<span class="bdl-section-title">选择合集</span>' +
+                '<span style="font-size: 12px; color: #999;" id="bdl-ugc-count"></span>' +
+                '</div>' +
+                '<div class="bdl-pages-container" id="bdl-ugc-list"></div>' +
+                '<div class="bdl-pages-actions">' +
+                '<button id="bdl-ugc-select-all">全选</button>' +
+                '<button id="bdl-ugc-select-none">取消全选</button>' +
+                '<button id="bdl-ugc-select-reverse">反选</button>' +
+                '</div>' +
+                '</div>' +
                 '<div class="bdl-section">' +
                 '<div class="bdl-section-header"><span class="bdl-section-title">选择清晰度</span></div>' +
                 '<div class="bdl-quality-grid" id="bdl-qualities"><button class="bdl-quality-btn">加载中</button></div>' +
+                '</div>' +
+                '<div class="bdl-section bdl-codec-selector">' +
+                '<div class="bdl-section-header"><span class="bdl-section-title">编码格式</span></div>' +
+                '<div class="bdl-codec-grid">' +
+                '<div class="bdl-codec-item">' +
+                '<span class="bdl-codec-label">视频编码</span>' +
+                '<select class="bdl-codec-select" id="bdl-video-codec"></select>' +
+                '</div>' +
+                '<div class="bdl-codec-item">' +
+                '<span class="bdl-codec-label">音频编码</span>' +
+                '<select class="bdl-codec-select" id="bdl-audio-codec"></select>' +
+                '</div>' +
+                '</div>' +
                 '</div>' +
                 '<div class="bdl-section">' +
                 '<div class="bdl-section-header"><span class="bdl-section-title">合并方式</span></div>' +
@@ -2190,6 +2988,14 @@
                 '</div>' +
                 '<span class="bdl-method-status ready">就绪</span>' +
                 '</div>' +
+                '<div class="bdl-method-item" data-method="ffmpeg-merge">' +
+                '<div class="bdl-method-radio"></div>' +
+                '<div class="bdl-method-content">' +
+                '<div class="bdl-method-name">FFmpeg合并</div>' +
+                '<div class="bdl-method-desc">使用FFmpeg进行专业合并</div>' +
+                '</div>' +
+                '<span class="bdl-method-status loading">加载中</span>' +
+                '</div>' +
                 '<div class="bdl-method-item" data-method="separate">' +
                 '<div class="bdl-method-radio"></div>' +
                 '<div class="bdl-method-content">' +
@@ -2200,6 +3006,7 @@
                 '</div>' +
                 '</div>' +
                 '</div>' +
+                '<div class="bdl-extra-downloads" id="bdl-extra-downloads"></div>' +
                 '<div class="bdl-tips" id="bdl-tips" style="display:none;">' +
                 '<div class="bdl-tips-title">💡 提示</div>' +
                 '<div id="bdl-tips-content"></div>' +
@@ -2243,14 +3050,24 @@
                 title: document.getElementById('bdl-title'),
                 author: document.getElementById('bdl-author'),
                 duration: document.getElementById('bdl-duration'),
+                vip: document.getElementById('bdl-vip'),
                 pagesSection: document.getElementById('bdl-pages-section'),
                 pagesList: document.getElementById('bdl-pages-list'),
                 pagesCount: document.getElementById('bdl-pages-count'),
                 selectAll: document.getElementById('bdl-select-all'),
                 selectNone: document.getElementById('bdl-select-none'),
                 selectReverse: document.getElementById('bdl-select-reverse'),
+                ugcSection: document.getElementById('bdl-ugc-section'),
+                ugcList: document.getElementById('bdl-ugc-list'),
+                ugcCount: document.getElementById('bdl-ugc-count'),
+                ugcSelectAll: document.getElementById('bdl-ugc-select-all'),
+                ugcSelectNone: document.getElementById('bdl-ugc-select-none'),
+                ugcSelectReverse: document.getElementById('bdl-ugc-select-reverse'),
                 qualities: document.getElementById('bdl-qualities'),
+                videoCodec: document.getElementById('bdl-video-codec'),
+                audioCodec: document.getElementById('bdl-audio-codec'),
                 methods: document.getElementById('bdl-methods'),
+                extraDownloads: document.getElementById('bdl-extra-downloads'),
                 progress: document.getElementById('bdl-progress'),
                 progressVideo: document.getElementById('bdl-progress-video'),
                 progressVideoText: document.getElementById('bdl-progress-video-text'),
@@ -2267,7 +3084,6 @@
                 footer: document.getElementById('bdl-footer')
             };
         },
-
         bindEvents: function () {
             var self = this;
 
@@ -2331,9 +3147,41 @@
                 self.updateSelectedPages();
             });
 
+            this.elements.ugcSelectAll.addEventListener('click', function () {
+                var checkboxes = self.elements.ugcList.querySelectorAll('.bdl-page-checkbox');
+                for (var i = 0; i < checkboxes.length; i++) {
+                    checkboxes[i].checked = true;
+                }
+                self.updateSelectedUGC();
+            });
+
+            this.elements.ugcSelectNone.addEventListener('click', function () {
+                var checkboxes = self.elements.ugcList.querySelectorAll('.bdl-page-checkbox');
+                for (var i = 0; i < checkboxes.length; i++) {
+                    checkboxes[i].checked = false;
+                }
+                self.updateSelectedUGC();
+            });
+
+            this.elements.ugcSelectReverse.addEventListener('click', function () {
+                var checkboxes = self.elements.ugcList.querySelectorAll('.bdl-page-checkbox');
+                for (var i = 0; i < checkboxes.length; i++) {
+                    checkboxes[i].checked = !checkboxes[i].checked;
+                }
+                self.updateSelectedUGC();
+            });
+
+            this.elements.videoCodec.addEventListener('change', function () {
+                Downloader.selectedVideoCodec = this.value;
+            });
+
+            this.elements.audioCodec.addEventListener('change', function () {
+                Downloader.selectedAudioCodec = parseInt(this.value);
+            });
+
             this.elements.footer.addEventListener('click', function () {
-                if (self.pagesSectionEnabled) {
-                    self.togglePagesSection();
+                if (self.pagesSectionEnabled || self.ugcSectionEnabled) {
+                    self.toggleExtendedSections();
                 }
             });
 
@@ -2349,7 +3197,7 @@
             observer.observe(document.body, { childList: true, subtree: true });
         },
 
-        updateVideoInfo: function (videoInfo, pageInfo) {
+        updateVideoInfo: function (videoInfo, pageInfo, vipType) {
             var title = videoInfo.title;
             if (videoInfo.pages.length > 1 && pageInfo.part) {
                 title += ' - ' + pageInfo.part;
@@ -2358,6 +3206,16 @@
             this.elements.title.title = title;
             this.elements.author.innerHTML = '<span>👤</span><span>' + videoInfo.owner.name + '</span>';
             this.elements.duration.innerHTML = '<span>⏱</span><span>' + Utils.formatDuration(videoInfo.duration) + '</span>';
+
+            var vipBadge = '';
+            if (vipType === 0) {
+                vipBadge = '<span class="bdl-vip-badge guest">游客</span>';
+            } else if (vipType === 1) {
+                vipBadge = '<span class="bdl-vip-badge normal">会员</span>';
+            } else if (vipType === 2) {
+                vipBadge = '<span class="bdl-vip-badge vip">大会员</span>';
+            }
+            this.elements.vip.innerHTML = vipBadge;
         },
 
         preparePagesSection: function (pages, currentIndex) {
@@ -2422,11 +3280,81 @@
             this.updateSelectedPages();
         },
 
-        togglePagesSection: function () {
-            if (this.elements.pagesSection.classList.contains('show')) {
+        prepareUGCSection: function (episodes) {
+            var self = this;
+            this.ugcSectionEnabled = true;
+            this.elements.ugcCount.textContent = '共' + episodes.length + '个视频';
+            this.elements.ugcList.innerHTML = '';
+
+            Downloader.videoInfo.ugcEpisodes = episodes;
+
+            for (var i = 0; i < episodes.length; i++) {
+                (function (index) {
+                    var episode = episodes[index];
+                    var item = document.createElement('div');
+                    item.className = 'bdl-page-item';
+
+                    var checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'bdl-page-checkbox';
+                    checkbox.dataset.index = index;
+                    checkbox.checked = false;
+
+                    var info = document.createElement('div');
+                    info.className = 'bdl-page-info';
+
+                    var num = document.createElement('div');
+                    num.className = 'bdl-page-num';
+                    num.textContent = 'E' + (index + 1);
+
+                    var epTitle = document.createElement('div');
+                    epTitle.className = 'bdl-page-title';
+                    epTitle.textContent = episode.title;
+                    epTitle.title = episode.title;
+
+                    info.appendChild(num);
+                    info.appendChild(epTitle);
+
+                    var duration = document.createElement('span');
+                    duration.className = 'bdl-page-duration';
+                    duration.textContent = Utils.formatDuration(episode.arc.duration);
+
+                    item.appendChild(checkbox);
+                    item.appendChild(info);
+                    item.appendChild(duration);
+
+                    checkbox.addEventListener('change', function () {
+                        self.updateSelectedUGC();
+                    });
+
+                    item.addEventListener('click', function (e) {
+                        if (e.target !== checkbox) {
+                            checkbox.checked = !checkbox.checked;
+                            self.updateSelectedUGC();
+                        }
+                    });
+
+                    self.elements.ugcList.appendChild(item);
+                })(i);
+            }
+
+            this.updateSelectedUGC();
+        },
+
+        toggleExtendedSections: function () {
+            var pagesVisible = this.elements.pagesSection.classList.contains('show');
+            var ugcVisible = this.elements.ugcSection.classList.contains('show');
+
+            if (pagesVisible || ugcVisible) {
                 this.elements.pagesSection.classList.remove('show');
+                this.elements.ugcSection.classList.remove('show');
             } else {
-                this.elements.pagesSection.classList.add('show');
+                if (this.pagesSectionEnabled) {
+                    this.elements.pagesSection.classList.add('show');
+                }
+                if (this.ugcSectionEnabled) {
+                    this.elements.ugcSection.classList.add('show');
+                }
             }
         },
 
@@ -2435,12 +3363,27 @@
             this.elements.pagesSection.classList.remove('show');
         },
 
+        hideUGCSection: function () {
+            this.ugcSectionEnabled = false;
+            this.elements.ugcSection.classList.remove('show');
+        },
+
         updateSelectedPages: function () {
             var checkboxes = this.elements.pagesList.querySelectorAll('.bdl-page-checkbox');
             Downloader.selectedPages = [];
             for (var i = 0; i < checkboxes.length; i++) {
                 if (checkboxes[i].checked) {
                     Downloader.selectedPages.push(parseInt(checkboxes[i].dataset.index));
+                }
+            }
+        },
+
+        updateSelectedUGC: function () {
+            var checkboxes = this.elements.ugcList.querySelectorAll('.bdl-page-checkbox');
+            Downloader.selectedUGCEpisodes = [];
+            for (var i = 0; i < checkboxes.length; i++) {
+                if (checkboxes[i].checked) {
+                    Downloader.selectedUGCEpisodes.push(parseInt(checkboxes[i].dataset.index));
                 }
             }
         },
@@ -2454,14 +3397,26 @@
                     var q = qualities[index];
                     var btn = document.createElement('button');
                     btn.className = 'bdl-quality-btn';
-                    if (q.qn === currentQn || index === 0) {
+
+                    if (!q.available) {
+                        btn.classList.add('disabled');
+                    }
+
+                    if ((q.qn === currentQn && q.available) || (index === 0 && q.available)) {
                         btn.classList.add('active');
                         Downloader.selectedQuality = q.qn;
                     }
+
                     btn.textContent = q.desc;
                     btn.dataset.qn = q.qn;
 
                     btn.addEventListener('click', function () {
+                        if (!q.available) {
+                            var vipTypeText = BiliAPI.userVipType === 0 ? '游客' : (BiliAPI.userVipType === 1 ? '普通会员' : '大会员');
+                            self.showAlert('当前账号(' + vipTypeText + ')无权限观看此清晰度', 'warning');
+                            return;
+                        }
+
                         var btns = document.querySelectorAll('.bdl-quality-btn');
                         for (var j = 0; j < btns.length; j++) {
                             btns[j].classList.remove('active');
@@ -2472,6 +3427,67 @@
 
                     self.elements.qualities.appendChild(btn);
                 })(i);
+            }
+        },
+
+        updateCodecSelectors: function (videoCodecs, audioCodecs) {
+            var self = this;
+
+            this.elements.videoCodec.innerHTML = '';
+            for (var i = 0; i < videoCodecs.length; i++) {
+                var option = document.createElement('option');
+                option.value = videoCodecs[i].type;
+                option.textContent = videoCodecs[i].name;
+                if (i === 0) {
+                    option.selected = true;
+                }
+                this.elements.videoCodec.appendChild(option);
+            }
+
+            this.elements.audioCodec.innerHTML = '';
+            for (var j = 0; j < audioCodecs.length; j++) {
+                var audioOption = document.createElement('option');
+                audioOption.value = audioCodecs[j].id;
+                audioOption.textContent = audioCodecs[j].name;
+                if (j === 0) {
+                    audioOption.selected = true;
+                }
+                this.elements.audioCodec.appendChild(audioOption);
+            }
+        },
+
+        updateExtraDownloads: function (hasSubtitles, hasDanmaku, hasCover) {
+            var self = this;
+            this.elements.extraDownloads.innerHTML = '';
+
+            if (hasCover) {
+                var coverBtn = document.createElement('button');
+                coverBtn.className = 'bdl-extra-btn';
+                coverBtn.innerHTML = '<span>🖼️</span><span>下载封面</span>';
+                coverBtn.addEventListener('click', function () {
+                    Downloader.downloadCover();
+                });
+                this.elements.extraDownloads.appendChild(coverBtn);
+            }
+
+            if (hasSubtitles) {
+                var subtitleBtn = document.createElement('button');
+                subtitleBtn.className = 'bdl-extra-btn';
+                subtitleBtn.innerHTML = '<span>📝</span><span>下载字幕</span>';
+                subtitleBtn.addEventListener('click', function () {
+                    Downloader.downloadSubtitles();
+                });
+                this.elements.extraDownloads.appendChild(subtitleBtn);
+            }
+
+            if (hasDanmaku) {
+                var danmakuBtn = document.createElement('button');
+                danmakuBtn.className = 'bdl-extra-btn';
+                danmakuBtn.innerHTML = '<span>💬</span><span>下载弹幕</span>';
+                danmakuBtn.addEventListener('click', function () {
+                    Downloader.downloadDanmaku();
+                });
+                this.elements.extraDownloads.appendChild(danmakuBtn);
             }
         },
 
@@ -2535,13 +3551,45 @@
         }
     };
 
+    function checkFFmpegAvailability() {
+        if (typeof FFmpeg !== 'undefined') {
+            FFmpegMerger.init().then(function () {
+                var statusElement = document.querySelector('[data-method="ffmpeg-merge"] .bdl-method-status');
+                if (statusElement) {
+                    statusElement.textContent = '就绪';
+                    statusElement.className = 'bdl-method-status ready';
+                }
+            }).catch(function () {
+                var statusElement = document.querySelector('[data-method="ffmpeg-merge"] .bdl-method-status');
+                if (statusElement) {
+                    statusElement.textContent = '不可用';
+                    statusElement.className = 'bdl-method-status';
+                    statusElement.style.background = '#f8d7da';
+                    statusElement.style.color = '#721c24';
+                }
+            });
+        } else {
+            setTimeout(checkFFmpegAvailability, 1000);
+        }
+    }
+
     function init() {
         Utils.delay(1000).then(function () {
+            ThreadManager.init();
             UI.init();
+
+            checkFFmpegAvailability();
+
             setTimeout(function () {
                 Downloader.refreshInfo();
             }, 500);
-            console.log('[video-download-helper] 初始化完成'+GM_info(version));
+
+            var cores = Utils.getCPUCores();
+            var threads = ThreadManager.maxThreads;
+            console.log('[视频下载助手] 初始化完成');
+            console.log('[视频下载助手] CPU逻辑核心数:', cores);
+            console.log('[视频下载助手] 最大下载线程数:', threads);
+            console.log('[视频下载助手] 版本: 0.1.2');
         });
     }
 

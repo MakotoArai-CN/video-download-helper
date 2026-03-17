@@ -1,0 +1,15 @@
+{
+  "name": "video-download-helper",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "vite": "^8.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
