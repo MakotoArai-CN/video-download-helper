@@ -1597,17 +1597,12 @@
                     if (b.id !== a.id) return b.id - a.id;
                     return b.bandwidth - a.bandwidth;
                 });
-
-                if (videoCodec) {
-                    for (var i = 0; i < sortedVideo.length; i++) {
-                        var codecType = sortedVideo[i].codecs.split('.')[0];
-                        if (sortedVideo[i].id === targetQn && codecType === videoCodec) {
-                            video = sortedVideo[i];
-                            break;
-                        }
+                for (var i = 0; i < sortedVideo.length; i++) {
+                    if (sortedVideo[i].id === targetQn) {
+                        video = sortedVideo[i];
+                        break;
                     }
                 }
-
                 if (!video) {
                     for (var j = 0; j < sortedVideo.length; j++) {
                         if (sortedVideo[j].id === targetQn && sortedVideo[j].codecs && sortedVideo[j].codecs.indexOf('avc1') === 0) {
@@ -1616,34 +1611,6 @@
                         }
                     }
                 }
-
-                if (!video) {
-                    for (var k = 0; k < sortedVideo.length; k++) {
-                        if (sortedVideo[k].id === targetQn) {
-                            video = sortedVideo[k];
-                            break;
-                        }
-                    }
-                }
-
-                if (!video) {
-                    for (var l = 0; l < sortedVideo.length; l++) {
-                        if (sortedVideo[l].id <= targetQn && sortedVideo[l].codecs && sortedVideo[l].codecs.indexOf('avc1') === 0) {
-                            video = sortedVideo[l];
-                            break;
-                        }
-                    }
-                }
-
-                if (!video) {
-                    for (var m = 0; m < sortedVideo.length; m++) {
-                        if (sortedVideo[m].id <= targetQn) {
-                            video = sortedVideo[m];
-                            break;
-                        }
-                    }
-                }
-
                 if (!video) {
                     video = sortedVideo[sortedVideo.length - 1];
                 }
@@ -3583,13 +3550,7 @@
             setTimeout(function () {
                 Downloader.refreshInfo();
             }, 500);
-
-            var cores = Utils.getCPUCores();
-            var threads = ThreadManager.maxThreads;
-            console.log('[视频下载助手] 初始化完成');
-            console.log('[视频下载助手] CPU逻辑核心数:', cores);
-            console.log('[视频下载助手] 最大下载线程数:', threads);
-            console.log('[视频下载助手] 版本: 0.1.2');
+            console.log('[video-download-helper] 初始化完成'+GM_info(version));
         });
     }
 
