@@ -1,0 +1,110 @@
+name: 发布油猴脚本
+run-name: 发布油猴脚本 - ${{ github.ref_name }}
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'src/**'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/publish-userscript.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/publish-userscript.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-userscript-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 编译与发布
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 类型检查
+        run: bunx tsc --noEmit
+
+      - name: 编译油猴脚本
+        run: bun run build
+
+      - name: 整理发布文件
+        run: |
+          cp dist/video-download-helper.user.js video-download-helper.js
+          test -s video-download-helper.js
+          grep -q '==UserScript==' video-download-helper.js
+
+          version="$(sed -nE 's#^// @version[[:space:]]+(.+)$#\1#p' video-download-helper.js | head -n 1)"
+          if [ -z "$version" ]; then
+            echo "::error::未找到 userscript @version 元数据"
+            exit 1
+          fi
+          echo "SCRIPT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-download-helper-userscript
+          path: |
+            dist/video-download-helper.user.js
+            video-download-helper.js
+          if-no-files-found: error
+
+      - name: 写入发布摘要
+        run: |
+          install_url="仅 push/workflow_dispatch 发布后可用"
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            install_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/video-download-helper.js"
+          fi
+
+          {
+            echo "## 油猴脚本发布"
+            echo ""
+            echo "| 项目 | 内容 |"
+            echo "| --- | --- |"
+            echo "| 版本 | ${SCRIPT_VERSION} |"
+            echo "| 构建产物 | \`dist/video-download-helper.user.js\` |"
+            echo "| 发布脚本 | \`video-download-helper.js\` |"
+            echo "| 安装地址 | ${install_url} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 提交发布脚本
+        if: github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet -- video-download-helper.js; then
+            echo "发布脚本已是最新。"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add video-download-helper.js
+          git commit -m "chore: publish userscript [skip ci]"
+          git push

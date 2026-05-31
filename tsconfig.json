@@ -15,5 +15,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"],
+  "exclude": ["dist", "node_modules"]
 }
