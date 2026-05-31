@@ -30,16 +30,18 @@ concurrency:
   group: publish-userscript-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SCRIPT_FILE: dist/video-download-helper.user.js
+  SCRIPT_ASSET: video-download-helper.user.js
+
 jobs:
   build:
-    name: 编译与发布
+    name: 编译与发布 Release
     runs-on: ubuntu-latest
 
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
@@ -55,72 +57,83 @@ jobs:
       - name: 编译油猴脚本
         run: bun run build
 
-      - name: 整理发布文件
+      - name: 整理发布信息
         run: |
-          cp dist/video-download-helper.user.js video-download-helper.js
-          test -s video-download-helper.js
-          grep -q '==UserScript==' video-download-helper.js
+          test -s "$SCRIPT_FILE"
+          grep -q '==UserScript==' "$SCRIPT_FILE"
 
-          version="$(sed -nE 's#^// @version[[:space:]]+(.+)$#\1#p' video-download-helper.js | head -n 1)"
+          version="$(sed -nE 's#^// @version[[:space:]]+(.+)$#\1#p' "$SCRIPT_FILE" | head -n 1)"
           if [ -z "$version" ]; then
             echo "::error::未找到 userscript @version 元数据"
             exit 1
           fi
-          echo "SCRIPT_VERSION=$version" >> "$GITHUB_ENV"
-          echo "SCRIPT_SHA256=$(sha256sum video-download-helper.js | awk '{print $1}')" >> "$GITHUB_ENV"
+
+          {
+            echo "SCRIPT_VERSION=$version"
+            echo "SCRIPT_SHA256=$(sha256sum "$SCRIPT_FILE" | awk '{print $1}')"
+            echo "RELEASE_TAG=v$version"
+            echo "RELEASE_TITLE=视频下载助手 v$version"
+            echo "RELEASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/tag/v$version"
+            echo "INSTALL_URL=https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${SCRIPT_ASSET}"
+          } >> "$GITHUB_ENV"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: video-download-helper-userscript
-          path: |
-            dist/video-download-helper.user.js
-            video-download-helper.js
+          path: ${{ env.SCRIPT_FILE }}
           if-no-files-found: error
 
-      - name: 提交发布脚本
+      - name: 发布到 GitHub Releases
         if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$(git status --porcelain -- video-download-helper.js)" ]; then
-            echo "发布脚本已是最新。"
-            exit 0
+          {
+            echo "## ${RELEASE_TITLE}"
+            echo ""
+            echo "- 构建提交: ${GITHUB_SHA}"
+            echo "- 安装/更新地址: ${INSTALL_URL}"
+          } > release-notes.md
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$SCRIPT_FILE" --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file release-notes.md --latest
+          else
+            gh release create "$RELEASE_TAG" "$SCRIPT_FILE" --title "$RELEASE_TITLE" --notes-file release-notes.md --latest
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add video-download-helper.js
-          git commit -m "chore: publish userscript [skip ci]"
-          git push
-
-      - name: 检查发布状态
+      - name: 检查 Release 发布状态
         if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          published_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/video-download-helper.js"
-          echo "PUBLISHED_URL=$published_url" >> "$GITHUB_ENV"
+          mkdir -p release-check
 
           for attempt in 1 2 3 4 5 6; do
-            if curl -fsSL "$published_url" -o published-userscript.js; then
-              published_sha="$(sha256sum published-userscript.js | awk '{print $1}')"
+            rm -f "release-check/$SCRIPT_ASSET"
+
+            if gh release download "$RELEASE_TAG" --pattern "$SCRIPT_ASSET" --dir release-check --clobber; then
+              published_sha="$(sha256sum "release-check/$SCRIPT_ASSET" | awk '{print $1}')"
               if [ "$published_sha" = "$SCRIPT_SHA256" ]; then
-                echo "PUBLISH_STATUS=已发布，内容校验通过" >> "$GITHUB_ENV"
+                echo "PUBLISH_STATUS=Release 已发布，资产校验通过" >> "$GITHUB_ENV"
                 exit 0
               fi
             fi
 
-            echo "等待 Raw 地址同步，第 ${attempt} 次重试..."
+            echo "等待 Release 资产同步，第 ${attempt} 次重试..."
             sleep 5
           done
 
-          echo "::error::发布校验失败：Raw 地址内容与本次构建产物不一致"
+          echo "::error::发布校验失败：Release 资产与本次构建产物不一致"
           exit 1
 
       - name: 写入发布摘要
         if: always()
         run: |
-          install_url="${PUBLISHED_URL:-仅 push/workflow_dispatch 发布后可用}"
-          publish_status="${PUBLISH_STATUS:-PR 仅构建产物，不发布根目录脚本}"
+          publish_status="${PUBLISH_STATUS:-PR 仅构建产物，不发布 Release}"
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ] && [ -z "${PUBLISH_STATUS}" ]; then
-            publish_status="发布校验未通过"
+            publish_status="Release 发布校验未通过"
           fi
 
           {
@@ -129,8 +142,8 @@ jobs:
             echo "| 项目 | 内容 |"
             echo "| --- | --- |"
             echo "| 版本 | ${SCRIPT_VERSION:-未知} |"
-            echo "| 构建产物 | \`dist/video-download-helper.user.js\` |"
-            echo "| 发布脚本 | \`video-download-helper.js\` |"
+            echo "| 构建产物 | \`${SCRIPT_FILE}\` |"
+            echo "| Release | ${RELEASE_URL:-仅 push/workflow_dispatch 发布后可用} |"
+            echo "| 安装地址 | ${INSTALL_URL:-仅 push/workflow_dispatch 发布后可用} |"
             echo "| 发布状态 | ${publish_status} |"
-            echo "| 安装地址 | ${install_url} |"
           } >> "$GITHUB_STEP_SUMMARY"

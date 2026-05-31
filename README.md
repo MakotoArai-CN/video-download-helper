@@ -31,8 +31,8 @@
 ## 安装
 
 1. 安装任意 Userscript 管理器。
-2. 新建脚本。
-3. 将项目根目录的 `video-download-helper.js` 全部内容粘贴进去并保存。
+2. 打开最新发布脚本：`https://github.com/MakotoArai-CN/video-download-helper/releases/latest/download/video-download-helper.user.js`。
+3. 在脚本管理器弹出的安装页中确认安装。
 4. 如果脚本管理器提示跨域权限，请允许访问 B 站接口、视频域名、`api.bugpk.com` 以及媒体资源域名。
 
 ## 哔哩哔哩使用
@@ -127,4 +127,3 @@ ffmpeg -i "input_video.mp4" -i "input_audio.m4a" -c copy "output_merged.mp4"
 | 配置文件 | `src/config.ts` |
 | 构建命令 | `bun run build` |
 | 生成脚本 | `dist/video-download-helper.user.js` |
-| 根目录脚本 | `video-download-helper.js` |

@@ -38,6 +38,8 @@ const userscriptHeader = `// ==UserScript==
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @icon         https://www.bilibili.com/favicon.ico
+// @downloadURL  https://github.com/MakotoArai-CN/video-download-helper/releases/latest/download/video-download-helper.user.js
+// @updateURL    https://github.com/MakotoArai-CN/video-download-helper/releases/latest/download/video-download-helper.user.js
 // @grant        unsafeWindow
 // @connect      api.bilibili.com
 // @connect      bilivideo.com
