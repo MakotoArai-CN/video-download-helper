@@ -67,6 +67,7 @@ jobs:
             exit 1
           fi
           echo "SCRIPT_VERSION=$version" >> "$GITHUB_ENV"
+          echo "SCRIPT_SHA256=$(sha256sum video-download-helper.js | awk '{print $1}')" >> "$GITHUB_ENV"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -76,24 +77,6 @@ jobs:
             dist/video-download-helper.user.js
             video-download-helper.js
           if-no-files-found: error
-
-      - name: 写入发布摘要
-        run: |
-          install_url="仅 push/workflow_dispatch 发布后可用"
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            install_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/video-download-helper.js"
-          fi
-
-          {
-            echo "## 油猴脚本发布"
-            echo ""
-            echo "| 项目 | 内容 |"
-            echo "| --- | --- |"
-            echo "| 版本 | ${SCRIPT_VERSION} |"
-            echo "| 构建产物 | \`dist/video-download-helper.user.js\` |"
-            echo "| 发布脚本 | \`video-download-helper.js\` |"
-            echo "| 安装地址 | ${install_url} |"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 提交发布脚本
         if: github.event_name != 'pull_request'
@@ -108,3 +91,46 @@ jobs:
           git add video-download-helper.js
           git commit -m "chore: publish userscript [skip ci]"
           git push
+
+      - name: 检查发布状态
+        if: github.event_name != 'pull_request'
+        run: |
+          published_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/video-download-helper.js"
+          echo "PUBLISHED_URL=$published_url" >> "$GITHUB_ENV"
+
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL "$published_url" -o published-userscript.js; then
+              published_sha="$(sha256sum published-userscript.js | awk '{print $1}')"
+              if [ "$published_sha" = "$SCRIPT_SHA256" ]; then
+                echo "PUBLISH_STATUS=已发布，内容校验通过" >> "$GITHUB_ENV"
+                exit 0
+              fi
+            fi
+
+            echo "等待 Raw 地址同步，第 ${attempt} 次重试..."
+            sleep 5
+          done
+
+          echo "::error::发布校验失败：Raw 地址内容与本次构建产物不一致"
+          exit 1
+
+      - name: 写入发布摘要
+        if: always()
+        run: |
+          install_url="${PUBLISHED_URL:-仅 push/workflow_dispatch 发布后可用}"
+          publish_status="${PUBLISH_STATUS:-PR 仅构建产物，不发布根目录脚本}"
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ] && [ -z "${PUBLISH_STATUS}" ]; then
+            publish_status="发布校验未通过"
+          fi
+
+          {
+            echo "## 油猴脚本发布"
+            echo ""
+            echo "| 项目 | 内容 |"
+            echo "| --- | --- |"
+            echo "| 版本 | ${SCRIPT_VERSION:-未知} |"
+            echo "| 构建产物 | \`dist/video-download-helper.user.js\` |"
+            echo "| 发布脚本 | \`video-download-helper.js\` |"
+            echo "| 发布状态 | ${publish_status} |"
+            echo "| 安装地址 | ${install_url} |"
+          } >> "$GITHUB_STEP_SUMMARY"
