@@ -84,6 +84,63 @@ export interface VideoId {
   id: string;
 }
 
+export type ShortVideoPlatform =
+  | 'douyin'
+  | 'kuaishou'
+  | 'xiaohongshu'
+  | 'weibo'
+  | 'toutiao'
+  | 'pipixia'
+  | 'pipigx';
+
+export type SiteContext =
+  | { kind: 'bilibili'; platform: 'bilibili'; sourceType: 'video' | 'bangumi' }
+  | { kind: 'short-video'; platform: ShortVideoPlatform }
+  | { kind: 'unsupported'; platform: null };
+
+export interface ShortVideoAuthor {
+  name?: string;
+  id?: string;
+  avatar?: string;
+}
+
+export interface ShortVideoMusic {
+  title?: string;
+  author?: string;
+  url?: string;
+  cover?: string;
+}
+
+export interface ShortVideoLivePhoto {
+  image?: string;
+  video?: string;
+}
+
+export interface ShortVideoData {
+  type?: 'video' | 'image' | 'live' | 'unknown';
+  title?: string;
+  desc?: string;
+  author?: ShortVideoAuthor;
+  cover?: string;
+  url?: string;
+  duration?: number | null;
+  video_backup?: string[];
+  video_id?: string;
+  images?: string[];
+  live_photo?: ShortVideoLivePhoto[];
+  music?: ShortVideoMusic;
+  platform?: ShortVideoPlatform;
+  sourceUrl?: string;
+  itemLabel?: string;
+  items?: ShortVideoData[];
+}
+
+export interface ShortVideoApiResponse {
+  code: number;
+  msg: string;
+  data?: ShortVideoData | ShortVideoData[] | null;
+}
+
 export interface Streams {
   video: DashStream | null;
   audio: DashStream | null;

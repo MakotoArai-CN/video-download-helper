@@ -1,8 +1,63 @@
-import type { MergeMethod } from './types.ts';
+import type { MergeMethod, ShortVideoPlatform } from './types.ts';
 
 export const LEARNING_DISCLAIMER = '本视频通过学习工具下载，仅供个人学习研究使用，请勿用于商业用途，请支持正版内容创作者。';
 
 export const CONFIG = {
+  SHORT_VIDEO_API_BASE: 'https://api.bugpk.com/api',
+  SHORT_VIDEO_PLATFORMS: {
+    douyin: {
+      label: '抖音',
+      endpoint: 'douyin',
+      mediaReferer: 'https://www.douyin.com/',
+      mediaOrigin: 'https://www.douyin.com',
+      proxyType: 'douyin'
+    },
+    kuaishou: {
+      label: '快手',
+      endpoint: 'kuaishou',
+      fallbackEndpoints: ['ksjx'],
+      mediaReferer: 'https://www.kuaishou.com/',
+      mediaOrigin: 'https://www.kuaishou.com'
+    },
+    xiaohongshu: {
+      label: '小红书',
+      endpoint: 'xhsjx',
+      mediaReferer: 'https://www.xiaohongshu.com/',
+      mediaOrigin: 'https://www.xiaohongshu.com'
+    },
+    weibo: {
+      label: '微博',
+      endpoint: 'weibo',
+      mediaReferer: 'https://weibo.com/',
+      mediaOrigin: 'https://weibo.com',
+      proxyType: 'weibo'
+    },
+    toutiao: {
+      label: '今日头条',
+      endpoint: 'toutiao',
+      mediaReferer: 'https://www.toutiao.com/',
+      mediaOrigin: 'https://www.toutiao.com'
+    },
+    pipixia: {
+      label: '皮皮虾',
+      endpoint: 'ppxia',
+      mediaReferer: 'https://h5.pipix.com/',
+      mediaOrigin: 'https://h5.pipix.com'
+    },
+    pipigx: {
+      label: '皮皮搞笑',
+      endpoint: 'pipigx',
+      mediaReferer: 'https://h5.pipigx.com/',
+      mediaOrigin: 'https://h5.pipigx.com'
+    }
+  } as Record<ShortVideoPlatform, {
+    label: string;
+    endpoint: string;
+    mediaReferer: string;
+    mediaOrigin: string;
+    fallbackEndpoints?: string[];
+    proxyType?: 'douyin' | 'weibo';
+  }>,
   QUALITY_MAP: {
     127: '8K 超高清',
     126: '杜比视界',

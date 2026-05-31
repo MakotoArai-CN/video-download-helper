@@ -2,13 +2,37 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 const userscriptHeader = `// ==UserScript==
-// @name         视频下载助手 - 哔哩哔哩
+// @name         视频下载助手 - 多平台
 // @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.1.3
-// @description  纯本地的视频下载器，使用原生JavaScript对视频音频进行合并并输出，支持登录账号可以观看的最高分辨率视频下载（非破解，下载的清晰度等取决于账号权限），脚本仅供学习研究使用。
+// @version      0.2.0
+// @description  支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、皮皮虾、皮皮搞笑等站点的内容解析下载，脚本仅供学习研究使用。
 // @author       Makoto
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
+// @match        *://douyin.com/*
+// @match        *://*.douyin.com/*
+// @match        *://iesdouyin.com/*
+// @match        *://*.iesdouyin.com/*
+// @match        *://kuaishou.com/*
+// @match        *://*.kuaishou.com/*
+// @match        *://xiaohongshu.com/*
+// @match        *://*.xiaohongshu.com/*
+// @match        *://xhslink.com/*
+// @match        *://*.xhslink.com/*
+// @match        *://xhs.cn/*
+// @match        *://*.xhs.cn/*
+// @match        *://weibo.com/*
+// @match        *://*.weibo.com/*
+// @match        *://weibo.cn/*
+// @match        *://*.weibo.cn/*
+// @match        *://toutiao.com/*
+// @match        *://*.toutiao.com/*
+// @match        *://pipix.com/*
+// @match        *://*.pipix.com/*
+// @match        *://ippzone.com/*
+// @match        *://*.ippzone.com/*
+// @match        *://pipigx.com/*
+// @match        *://*.pipigx.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @grant        GM_getValue
@@ -20,9 +44,9 @@ const userscriptHeader = `// ==UserScript==
 // @connect      bilivideo.cn
 // @connect      bilivideo.net
 // @connect      akamaized.net
+// @connect      api.bugpk.com
 // @connect      *
-// @require      https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.11.6/ffmpeg.min.js
-// @run-at       document-idle
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 `;

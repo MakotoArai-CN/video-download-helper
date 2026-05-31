@@ -1,4 +1,4 @@
-import type { VideoId } from './types.ts';
+import type { SiteContext, VideoId } from './types.ts';
 
 export const Utils = {
   getVideoId(): VideoId | null {
@@ -10,6 +10,43 @@ export const Utils = {
     const ssMatch = pathname.match(/\/bangumi\/play\/ss(\d+)/i);
     if (ssMatch) return { type: 'bangumi', id: 'ss' + ssMatch[1] };
     return null;
+  },
+
+  getSiteContext(): SiteContext {
+    const host = window.location.hostname.toLowerCase();
+    const videoId = this.getVideoId();
+
+    if (host.endsWith('bilibili.com') && videoId) {
+      return {
+        kind: 'bilibili',
+        platform: 'bilibili',
+        sourceType: videoId.type
+      };
+    }
+
+    if (host.endsWith('douyin.com') || host.endsWith('iesdouyin.com')) {
+      return { kind: 'short-video', platform: 'douyin' };
+    }
+    if (host.endsWith('kuaishou.com')) {
+      return { kind: 'short-video', platform: 'kuaishou' };
+    }
+    if (host.endsWith('xiaohongshu.com') || host.endsWith('xhslink.com') || host.endsWith('xhs.cn')) {
+      return { kind: 'short-video', platform: 'xiaohongshu' };
+    }
+    if (host.endsWith('weibo.com') || host.endsWith('weibo.cn')) {
+      return { kind: 'short-video', platform: 'weibo' };
+    }
+    if (host.endsWith('toutiao.com')) {
+      return { kind: 'short-video', platform: 'toutiao' };
+    }
+    if (host.endsWith('pipix.com')) {
+      return { kind: 'short-video', platform: 'pipixia' };
+    }
+    if (host.endsWith('ippzone.com') || host.endsWith('pipigx.com')) {
+      return { kind: 'short-video', platform: 'pipigx' };
+    }
+
+    return { kind: 'unsupported', platform: null };
   },
 
   getCurrentPage(): number {
@@ -28,6 +65,11 @@ export const Utils = {
     return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
   },
 
+  formatDurationMs(milliseconds?: number | null): string {
+    if (!milliseconds) return '--';
+    return this.formatDuration(milliseconds >= 1000 ? Math.round(milliseconds / 1000) : milliseconds);
+  },
+
   formatBytes(bytes: number): string {
     if (!bytes) return '0 B';
     const k = 1024;
@@ -42,6 +84,18 @@ export const Utils = {
       .replace(/\s+/g, ' ')
       .trim()
       .substring(0, 180);
+  },
+
+  inferExtension(url: string, fallback: string): string {
+    const cleanUrl = url.split('#')[0].split('?')[0];
+    const match = cleanUrl.match(/\.([a-zA-Z0-9]{2,6})$/);
+    if (!match) return fallback;
+    return match[1].toLowerCase();
+  },
+
+  getShortVideoFilename(title: string, author?: string | null): string {
+    const parts = [title, author].filter(Boolean).join(' - ');
+    return this.sanitizeFilename(parts || 'short-video');
   },
 
   delay(ms: number): Promise<void> {

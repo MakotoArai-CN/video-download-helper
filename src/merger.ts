@@ -64,6 +64,12 @@ export const JSMerger = {
     return result;
   },
 
+  toArrayBuffer(data: Uint8Array): ArrayBuffer {
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    return buffer;
+  },
+
   modifyTrackId(trakData: Uint8Array, newId: number): Uint8Array {
     const result = new Uint8Array(trakData);
     for (const box of this.parseContainerBox(result)) {
@@ -213,13 +219,13 @@ export const JSMerger = {
             parts.push(this.modifyMoofTrackId(audioMoof[j].data, 2));
             if (audioMdat[j]) parts.push(audioMdat[j].data);
           }
-          resolve(this.concat(...parts).buffer);
+          resolve(this.toArrayBuffer(this.concat(...parts)));
         } else {
           const mergedMoov = audioMoov ? this.buildMoov(videoMoov, audioMoov, metadata) : videoMoov.data;
           const allMdat = [...videoMdat, ...audioMdat].map((m: any) => m.data.slice(8));
           const mdatContent = this.concat(...allMdat);
           const mergedMdat = this.createBox('mdat', mdatContent);
-          resolve(this.concat(videoFtyp.data, mergedMoov, mergedMdat).buffer);
+          resolve(this.toArrayBuffer(this.concat(videoFtyp.data, mergedMoov, mergedMdat)));
         }
       } catch (error) {
         console.error('JS合并失败:', error);

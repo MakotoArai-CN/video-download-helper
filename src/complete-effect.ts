@@ -1,5 +1,5 @@
 export const CompleteEffect = {
-  show(): void {
+  show(root: ShadowRoot | null, progressCircle?: HTMLElement | null): void {
     const overlay = document.createElement('div');
     overlay.className = 'bdl-complete-overlay';
     overlay.innerHTML = '<div class="bdl-complete-container">' +
@@ -11,10 +11,10 @@ export const CompleteEffect = {
       '<div class="bdl-complete-icon"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></div>' +
       '</div>' +
       '<div class="bdl-complete-text">✨ 下载完成 ✨</div>';
-    document.body.appendChild(overlay);
+    (root || document.body).appendChild(overlay);
     this.createParticles(overlay.querySelector('.bdl-complete-particles')!);
     this.createSparkles(overlay.querySelector('.bdl-complete-sparkles')!);
-    this.addBubbles();
+    this.addBubbles(progressCircle);
     setTimeout(() => {
       overlay.style.animation = 'bdlFadeOut 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards';
       setTimeout(() => { overlay.parentNode?.removeChild(overlay); }, 500);
@@ -64,8 +64,8 @@ export const CompleteEffect = {
     }
   },
 
-  addBubbles(): void {
-    const circleProgress = document.getElementById('bdl-progress-circle');
+  addBubbles(progressCircle?: HTMLElement | null): void {
+    const circleProgress = progressCircle || document.getElementById('bdl-progress-circle');
     if (!circleProgress) return;
     for (let i = 1; i <= 3; i++) {
       const bubble = document.createElement('div');
