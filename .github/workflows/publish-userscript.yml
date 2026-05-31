@@ -81,7 +81,7 @@ jobs:
       - name: 提交发布脚本
         if: github.event_name != 'pull_request'
         run: |
-          if git diff --quiet -- video-download-helper.js; then
+          if [ -z "$(git status --porcelain -- video-download-helper.js)" ]; then
             echo "发布脚本已是最新。"
             exit 0
           fi
