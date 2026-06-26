@@ -523,7 +523,7 @@ export const Downloader = {
         (loaded, total) => {
           const percent = Math.round(loaded / total * 100);
           UI.updateProgress('video', percent);
-          UI.updateCircleProgress(audioUrl ? percent * 0.4 : percent);
+          UI.updateCircleProgress(audioUrls ? percent * 0.4 : percent);
         },
         (loaded, total) => {
           const percent = Math.round(loaded / total * 100);
