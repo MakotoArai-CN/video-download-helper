@@ -36,6 +36,16 @@ export const Network = {
     });
   },
 
+  downloadBufferWithFallback(urls: string[], onProgress?: (loaded: number, total: number) => void, headers?: Record<string, string>): Promise<ArrayBuffer> {
+    const unique = [...new Set(urls.filter(Boolean))];
+    if (unique.length === 0) return Promise.reject(new Error('无可用下载地址'));
+    const tryNext = (index: number, lastError?: Error): Promise<ArrayBuffer> => {
+      if (index >= unique.length) return Promise.reject(lastError || new Error('所有地址均不可用'));
+      return this.downloadBuffer(unique[index], onProgress, headers).catch(err => tryNext(index + 1, err));
+    };
+    return tryNext(0);
+  },
+
   downloadBuffer(url: string, onProgress?: (loaded: number, total: number) => void, headers?: Record<string, string>): Promise<ArrayBuffer> {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({

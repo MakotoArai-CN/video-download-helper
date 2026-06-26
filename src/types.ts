@@ -22,6 +22,8 @@ export interface DashStream {
   bandwidth: number;
   baseUrl?: string;
   base_url?: string;
+  backupUrl?: string[];
+  backup_url?: string[];
 }
 
 export interface DashData {

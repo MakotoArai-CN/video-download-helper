@@ -4,7 +4,7 @@ import { resolve } from 'path';
 const userscriptHeader = `// ==UserScript==
 // @name         视频下载助手 - 多平台
 // @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.2.0
+// @version      0.2.1
 // @description  支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、皮皮虾、皮皮搞笑等站点的内容解析下载，脚本仅供学习研究使用。
 // @author       Makoto
 // @match        *://www.bilibili.com/video/*

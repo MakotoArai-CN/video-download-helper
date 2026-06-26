@@ -507,14 +507,19 @@ export const Downloader = {
       if (!streams.video) throw new Error('无法获取视频流');
 
       const videoUrl = (streams.video as any).baseUrl || (streams.video as any).base_url;
-      const audioUrl = streams.audio ? ((streams.audio as any).baseUrl || (streams.audio as any).base_url) : null;
+      const videoBackups: string[] = (streams.video as any).backupUrl || (streams.video as any).backup_url || [];
+      const videoUrls = [videoUrl, ...videoBackups].filter(Boolean) as string[];
+
+      const audioMainUrl = streams.audio ? ((streams.audio as any).baseUrl || (streams.audio as any).base_url) : null;
+      const audioBackups: string[] = streams.audio ? ((streams.audio as any).backupUrl || (streams.audio as any).backup_url || []) : [];
+      const audioUrls = audioMainUrl ? [audioMainUrl, ...audioBackups].filter(Boolean) as string[] : null;
 
       UI.updateProgress('video', 0, '下载视频...');
       UI.updateCircleProgress(0);
 
       return ThreadManager.downloadWithThread(
-        videoUrl,
-        audioUrl,
+        videoUrls,
+        audioUrls,
         (loaded, total) => {
           const percent = Math.round(loaded / total * 100);
           UI.updateProgress('video', percent);

@@ -48,23 +48,26 @@ export const ThreadManager = {
   },
 
   downloadWithThread(
-    videoUrl: string,
-    audioUrl: string | null,
+    videoUrls: string | string[],
+    audioUrls: string | string[] | null,
     onVideoProgress?: (loaded: number, total: number) => void,
     onAudioProgress?: (loaded: number, total: number) => void
   ): Promise<DownloadBuffers> {
+    const vUrls = Array.isArray(videoUrls) ? videoUrls : [videoUrls];
+    const aUrls = audioUrls ? (Array.isArray(audioUrls) ? audioUrls : [audioUrls]) : null;
+
     let videoPromise: Promise<ArrayBuffer>;
     let audioPromise: Promise<ArrayBuffer | null>;
 
     if (this.maxThreads > 1) {
-      videoPromise = this.runTask(() => Network.downloadBuffer(videoUrl, onVideoProgress));
-      audioPromise = audioUrl
-        ? this.runTask(() => Network.downloadBuffer(audioUrl, onAudioProgress))
+      videoPromise = this.runTask(() => Network.downloadBufferWithFallback(vUrls, onVideoProgress));
+      audioPromise = aUrls
+        ? this.runTask(() => Network.downloadBufferWithFallback(aUrls, onAudioProgress))
         : Promise.resolve(null);
     } else {
-      videoPromise = Network.downloadBuffer(videoUrl, onVideoProgress);
-      audioPromise = audioUrl
-        ? videoPromise.then(() => Network.downloadBuffer(audioUrl, onAudioProgress))
+      videoPromise = Network.downloadBufferWithFallback(vUrls, onVideoProgress);
+      audioPromise = aUrls
+        ? videoPromise.then(() => Network.downloadBufferWithFallback(aUrls, onAudioProgress))
         : Promise.resolve(null);
     }
 
