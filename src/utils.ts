@@ -39,9 +39,6 @@ export const Utils = {
     if (host.endsWith('toutiao.com')) {
       return { kind: 'short-video', platform: 'toutiao' };
     }
-    if (host.endsWith('pipix.com')) {
-      return { kind: 'short-video', platform: 'pipixia' };
-    }
     if (host.endsWith('ippzone.com') || host.endsWith('pipigx.com')) {
       return { kind: 'short-video', platform: 'pipigx' };
     }

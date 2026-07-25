@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch"
+    "dev": "VDH_DEV=1 vite build --watch",
+    "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",

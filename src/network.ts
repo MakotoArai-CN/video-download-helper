@@ -1,3 +1,5 @@
+import { Diagnostics } from './diagnostics.ts';
+
 declare function GM_xmlhttpRequest(details: {
   method: string;
   url: string;
@@ -8,6 +10,11 @@ declare function GM_xmlhttpRequest(details: {
   ontimeout?: () => void;
   onprogress?: (e: any) => void;
 }): void;
+
+function shortUrl(url: string): string {
+  if (!url) return url;
+  return url.length > 140 ? url.slice(0, 140) + '...' : url;
+}
 
 export const Network = {
   fetchJSON(url: string, headers?: Record<string, string>): Promise<any> {
@@ -27,11 +34,18 @@ export const Network = {
             if (typeof data === 'string') data = JSON.parse(data);
             resolve(data);
           } else {
+            Diagnostics.warn('network', `fetchJSON HTTP ${res.status}`, shortUrl(url));
             reject(new Error('HTTP ' + res.status));
           }
         },
-        onerror() { reject(new Error('网络错误')); },
-        ontimeout() { reject(new Error('请求超时')); }
+        onerror() {
+          Diagnostics.error('network', 'fetchJSON 网络错误', shortUrl(url));
+          reject(new Error('网络错误'));
+        },
+        ontimeout() {
+          Diagnostics.error('network', 'fetchJSON 请求超时', shortUrl(url));
+          reject(new Error('请求超时'));
+        }
       });
     });
   },
@@ -63,10 +77,19 @@ export const Network = {
         },
         onload(res) {
           if (res.status >= 200 && res.status < 300) resolve(res.response);
-          else reject(new Error('下载失败: ' + res.status));
+          else {
+            Diagnostics.warn('network', `downloadBuffer HTTP ${res.status}`, shortUrl(url));
+            reject(new Error('下载失败: ' + res.status));
+          }
         },
-        onerror() { reject(new Error('下载网络错误')); },
-        ontimeout() { reject(new Error('下载超时')); }
+        onerror() {
+          Diagnostics.error('network', 'downloadBuffer 网络错误', shortUrl(url));
+          reject(new Error('下载网络错误'));
+        },
+        ontimeout() {
+          Diagnostics.error('network', 'downloadBuffer 超时', shortUrl(url));
+          reject(new Error('下载超时'));
+        }
       });
     });
   },

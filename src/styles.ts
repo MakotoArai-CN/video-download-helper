@@ -1385,6 +1385,7 @@ export const STYLES = `
             overflow: hidden;
             display: none;
             transform-origin: top right;
+            z-index: 100001;
         }
 
         .bdl-popup.is-dragging {
@@ -1761,6 +1762,236 @@ export const STYLES = `
         #bdl-pages-section,
         #bdl-ugc-section {
             transition: max-height 0.25s ease, opacity 0.2s ease, margin-bottom 0.2s ease;
+        }
+
+        /* ========== 诊断面板 ========== */
+        .bdl-diag-trigger {
+            background: none;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 8px;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.2s, background 0.2s;
+        }
+
+        .bdl-diag-trigger:hover {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        .bdl-diag-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15, 20, 30, 0.55);
+            z-index: 2147483647;
+            pointer-events: auto;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+
+        .bdl-diag-modal.show {
+            display: flex;
+            animation: bdlFadeIn 0.2s ease;
+        }
+
+        .bdl-diag-card {
+            width: min(720px, calc(100vw - 32px));
+            max-height: calc(100vh - 48px);
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        }
+
+        .bdl-diag-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid #eef0f3;
+            background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+        }
+
+        .bdl-diag-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .bdl-diag-close {
+            background: none;
+            border: none;
+            font-size: 22px;
+            line-height: 1;
+            color: #6b7280;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+        }
+
+        .bdl-diag-close:hover {
+            background: rgba(0, 0, 0, 0.05);
+            color: #1f2937;
+        }
+
+        .bdl-diag-body {
+            flex: 1;
+            overflow: auto;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .bdl-diag-desc {
+            font-size: 12px;
+            color: #6b7280;
+            line-height: 1.6;
+        }
+
+        .bdl-diag-note-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .bdl-diag-note {
+            width: 100%;
+            min-height: 72px;
+            resize: vertical;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            font: inherit;
+            font-size: 13px;
+            color: #111827;
+            background: #fff;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+
+        .bdl-diag-note:focus {
+            border-color: #00a1d6;
+            box-shadow: 0 0 0 3px rgba(0, 161, 214, 0.16);
+        }
+
+        .bdl-diag-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .bdl-diag-toolbar-spacer {
+            flex: 1;
+        }
+
+        .bdl-diag-log {
+            background: #0f172a;
+            color: #d5dbe7;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 11.5px;
+            line-height: 1.55;
+            max-height: 260px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .bdl-diag-log-empty {
+            color: #6b7280;
+            font-style: italic;
+        }
+
+        .bdl-diag-log-line {
+            display: block;
+            padding: 2px 0;
+        }
+
+        .bdl-diag-log-line.level-info { color: #a7d4ff; }
+        .bdl-diag-log-line.level-warn { color: #ffd28a; }
+        .bdl-diag-log-line.level-error { color: #ff8a8a; }
+        .bdl-diag-log-line.level-debug { color: #a3a3a3; }
+
+        .bdl-diag-log-detail {
+            display: block;
+            color: #9ca3af;
+            padding-left: 12px;
+            border-left: 2px solid #1f2937;
+            margin: 2px 0 4px 4px;
+        }
+
+        .bdl-diag-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #1f2937;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+
+        .bdl-diag-btn:hover {
+            background: #f3f4f6;
+            border-color: #9ca3af;
+        }
+
+        .bdl-diag-btn.primary {
+            background: linear-gradient(135deg, #00a1d6 0%, #0081b3 100%);
+            border-color: transparent;
+            color: #fff;
+            box-shadow: 0 6px 14px rgba(0, 129, 179, 0.28);
+        }
+
+        .bdl-diag-btn.primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(0, 129, 179, 0.34);
+            background: linear-gradient(135deg, #00b1e6 0%, #008fc0 100%);
+        }
+
+        .bdl-diag-btn.danger {
+            color: #b91c1c;
+            border-color: #fca5a5;
+            background: #fff5f5;
+        }
+
+        .bdl-diag-btn.danger:hover {
+            background: #fee2e2;
+        }
+
+        .bdl-diag-toast {
+            font-size: 12px;
+            color: #047857;
+            padding: 4px 0;
+            min-height: 20px;
+        }
+
+        .bdl-diag-toast.error { color: #b91c1c; }
+
+        @media (max-width: 720px) {
+            .bdl-diag-card {
+                width: calc(100vw - 20px);
+                max-height: calc(100vh - 32px);
+            }
+            .bdl-diag-log {
+                max-height: 200px;
+            }
         }
 
         @media (max-width: 720px) {

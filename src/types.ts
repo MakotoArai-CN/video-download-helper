@@ -92,7 +92,6 @@ export type ShortVideoPlatform =
   | 'xiaohongshu'
   | 'weibo'
   | 'toutiao'
-  | 'pipixia'
   | 'pipigx';
 
 export type SiteContext =

@@ -1,5 +1,6 @@
 import { CONFIG } from './config.ts';
-import { Network } from './network.ts';
+import { DouyinInterceptor } from './douyin-interceptor.ts';
+import type { DouyinAwemeDetail } from './douyin-interceptor.ts';
 import type { ShortVideoApiResponse, ShortVideoAuthor, ShortVideoData, ShortVideoPlatform } from './types.ts';
 
 type RawShortVideoData = Record<string, any>;
@@ -271,23 +272,6 @@ function combineShortVideoItems(items: ShortVideoData[], platform: ShortVideoPla
   };
 }
 
-function getEndpointCandidates(endpoint: string, fallbackEndpoints: string[] = []): string[] {
-  const endpoints = [endpoint, ...fallbackEndpoints]
-    .map(value => value.replace(/^\/+/, ''))
-    .filter(Boolean)
-    .map(cleanEndpoint => ({
-      cleanEndpoint,
-      withoutPhp: cleanEndpoint.endsWith('.php') ? cleanEndpoint.slice(0, -4) : cleanEndpoint
-    }));
-
-  return unique([
-    ...endpoints.map(item => item.withoutPhp),
-    ...endpoints.map(item => item.cleanEndpoint),
-    ...endpoints.map(item => `${item.withoutPhp}.php`),
-    'short_videos'
-  ]);
-}
-
 function getDocumentSource(): string {
   return [
     document.querySelector<HTMLMetaElement>('meta[property="og:video:url"]')?.content || '',
@@ -523,13 +507,6 @@ function isKuaishouFeedPage(url: string): boolean {
   return pathname === '/new-reco' || pathname === '/';
 }
 
-function getResolvableUrls(url: string, platform: ShortVideoPlatform): string[] {
-  if (platform === 'douyin') return getDouyinResolvableUrls(url);
-  if (platform === 'kuaishou') return getKuaishouResolvableUrls(url);
-  if (platform === 'weibo') return getWeiboResolvableUrls(url);
-  return [url];
-}
-
 function isWeiboNonContentPage(url: string, candidates: string[]): boolean {
   if (candidates.some(candidate => /weibo\.com\/tv\/show\/1034:/i.test(candidate))) return false;
 
@@ -539,6 +516,527 @@ function isWeiboNonContentPage(url: string, candidates: string[]): boolean {
     || /^\/newlogin/i.test(pathname)
     || /^\/login/i.test(pathname)
     || /^\/u\/?\d*$/i.test(pathname);
+}
+
+// ---------------------------------------------------------------------------
+// 快手本地解析
+// ---------------------------------------------------------------------------
+async function parseKuaishouLocal(url: string): Promise<ShortVideoData | null> {
+  const video = getBestVisibleVideo();
+  const videoUrls = unique([
+    normalizeUrl(video?.currentSrc),
+    normalizeUrl(video?.src),
+    ...getKuaishouPerformanceVideoUrls()
+  ].filter(isKuaishouVideoUrl));
+
+  if (videoUrls.length > 0) {
+    const title = getKuaishouDomTitle(video);
+    return {
+      type: 'video',
+      title,
+      desc: title,
+      author: getKuaishouDomAuthor(video),
+      cover: normalizeUrl(video?.poster) || '',
+      url: videoUrls[0],
+      video_backup: videoUrls.slice(1),
+      platform: 'kuaishou',
+      sourceUrl: url
+    };
+  }
+
+  // Poll for video to appear in DOM for up to 2s
+  for (let i = 0; i < 8; i++) {
+    const v2 = getBestVisibleVideo();
+    const urls2 = unique([
+      normalizeUrl(v2?.currentSrc),
+      normalizeUrl(v2?.src),
+      ...getKuaishouPerformanceVideoUrls()
+    ].filter(isKuaishouVideoUrl));
+
+    if (urls2.length > 0) {
+      const title2 = getKuaishouDomTitle(v2);
+      return {
+        type: 'video',
+        title: title2,
+        desc: title2,
+        author: getKuaishouDomAuthor(v2),
+        cover: normalizeUrl(v2?.poster) || '',
+        url: urls2[0],
+        video_backup: urls2.slice(1),
+        platform: 'kuaishou',
+        sourceUrl: url
+      };
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 小红书本地解析
+// ---------------------------------------------------------------------------
+function parseXhsWindowState(url: string): ShortVideoData | null {
+  const win = getPageWindow();
+  const stateKeys = ['__INITIAL_SSR_STATE__', '__NUXT__', '__data', 'initialState', '__REDUX_STATE__'];
+
+  const walk = (value: any, depth: number, seen: WeakSet<object>): ShortVideoData | null => {
+    if (depth > 8 || !value || typeof value !== 'object') return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    // Look for XHS note structure
+    if (value.note || value.noteDetail) {
+      const note = value.note || value.noteDetail;
+      if (note?.video?.media?.stream) {
+        const streams = note.video.media.stream;
+        const h264 = streams.h264?.[0] || streams.av1?.[0] || streams.h265?.[0];
+        if (h264?.masterUrl) {
+          const videoUrl = h264.masterUrl;
+          const images = note.imageList?.map((img: any) => img?.urlDefault || img?.url).filter(Boolean) || [];
+          const isImageNote = images.length > 0 && !videoUrl;
+          return {
+            type: isImageNote ? 'image' : 'video',
+            title: note.title || note.desc || '小红书内容',
+            desc: note.desc || '',
+            author: { name: note.user?.nickname || note.author?.nickname || '' },
+            cover: note.cover?.urlDefault || note.cover?.url || '',
+            url: videoUrl || '',
+            images: isImageNote ? images : [],
+            platform: 'xiaohongshu',
+            sourceUrl: url
+          };
+        }
+      }
+      // Image note
+      if (note?.imageList?.length > 0) {
+        const images = note.imageList.map((img: any) => img?.urlDefault || img?.infoList?.[0]?.url || img?.url).filter(Boolean);
+        if (images.length > 0) {
+          return {
+            type: 'image',
+            title: note.title || note.desc || '小红书图集',
+            desc: note.desc || '',
+            author: { name: note.user?.nickname || '' },
+            cover: images[0],
+            url: '',
+            images,
+            platform: 'xiaohongshu',
+            sourceUrl: url
+          };
+        }
+      }
+    }
+
+    const entries = Object.entries(value).slice(0, 100);
+    for (const [, v] of entries) {
+      const found = walk(v, depth + 1, seen);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const seen = new WeakSet<object>();
+  for (const key of stateKeys) {
+    try {
+      const result = walk(win[key], 0, seen);
+      if (result) return result;
+    } catch {}
+  }
+
+  // Also try performance entries for xhs video CDN
+  try {
+    const videoUrls = performance.getEntriesByType('resource')
+      .map(e => e.name)
+      .filter(n => /xhscdn\.com.*\.mp4/i.test(n) || /sns-video.*\.mp4/i.test(n));
+    if (videoUrls.length > 0) {
+      const video = getBestVisibleVideo();
+      return {
+        type: 'video',
+        title: document.title.replace(/[-_|｜]?\s*小红书.*$/i, '').trim() || '小红书视频',
+        desc: '',
+        author: {},
+        cover: video?.poster || '',
+        url: videoUrls[0],
+        platform: 'xiaohongshu',
+        sourceUrl: url
+      };
+    }
+  } catch {}
+  return null;
+}
+
+async function parseXhsLocal(url: string): Promise<ShortVideoData | null> {
+  // Try immediately
+  const immediate = parseXhsWindowState(url);
+  if (immediate?.url || (immediate?.images && immediate.images.length > 0)) return immediate;
+
+  // Poll for SSR data to populate
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 300));
+    const result = parseXhsWindowState(url);
+    if (result?.url || (result?.images && result.images.length > 0)) return result;
+  }
+
+  // DOM fallback: video element
+  const video = getBestVisibleVideo();
+  const src = video?.currentSrc || video?.src;
+  if (src && src.startsWith('http')) {
+    return {
+      type: 'video',
+      title: document.title.replace(/[-_|｜]?\s*小红书.*$/i, '').trim() || '小红书视频',
+      desc: '',
+      author: {},
+      cover: video?.poster || '',
+      url: src,
+      platform: 'xiaohongshu',
+      sourceUrl: url
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 微博本地解析
+// ---------------------------------------------------------------------------
+async function parseWeiboLocal(url: string): Promise<ShortVideoData | null> {
+  const win = getPageWindow();
+
+  // Try window state first
+  const stateAttempt = (() => {
+    try {
+      const keys = ['__INITIAL_STATE__', '__preloadData', '__wb_data__', 'WEIBO_DATA'];
+      for (const k of keys) {
+        const val = win[k];
+        if (!val) continue;
+        const walk = (v: any, d: number, seen: WeakSet<object>): any => {
+          if (d > 6 || !v || typeof v !== 'object') return null;
+          if (seen.has(v)) return null;
+          seen.add(v);
+          if (v.video_sources && Array.isArray(v.video_sources)) return v;
+          if (v.media_info?.stream_url) return v;
+          // 图集帖子：含 pic_ids 和 pic_infos 且有内容
+          if (Array.isArray(v.pic_ids) && v.pic_ids.length > 0 && v.pic_infos) return v;
+          for (const [, child] of Object.entries(v).slice(0, 100)) {
+            const r = walk(child, d + 1, seen);
+            if (r) return r;
+          }
+          return null;
+        };
+        const found = walk(val, 0, new WeakSet());
+        if (found) {
+          const cleanText = found.text?.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() || '';
+          const title = cleanText || '微博内容';
+          const authorName = found.user?.screen_name || '';
+
+          // 图集
+          if (Array.isArray(found.pic_ids) && found.pic_ids.length > 0 && found.pic_infos) {
+            const images = (found.pic_ids as string[]).map((pid: string) => {
+              const info = found.pic_infos[pid];
+              return info?.original?.url || info?.large?.url || info?.bmiddle?.url || '';
+            }).filter(Boolean);
+            if (images.length > 0) {
+              return {
+                type: 'image' as const,
+                title,
+                desc: cleanText,
+                author: { name: authorName },
+                cover: images[0],
+                url: '',
+                images,
+                platform: 'weibo' as const,
+                sourceUrl: url
+              };
+            }
+          }
+
+          // 视频
+          const sources = found.video_sources || [];
+          const best = sources.find((s: any) => s.quality === 'original' || s.quality === 'HD') || sources[0];
+          const videoUrl = best?.url || found.media_info?.stream_url;
+          if (videoUrl) {
+            return {
+              type: 'video' as const,
+              title,
+              desc: cleanText,
+              author: { name: authorName },
+              cover: found.thumbnail_pic || found.original_pic || '',
+              url: videoUrl,
+              platform: 'weibo' as const,
+              sourceUrl: url
+            };
+          }
+        }
+      }
+    } catch {}
+    return null;
+  })();
+  if (stateAttempt) return stateAttempt;
+
+  // Use weibo AJAX show API
+  const fids = extractWeiboFids(`${url}\n${getDocumentSource()}`);
+  for (const fid of fids) {
+    try {
+      const tvUrl = `https://weibo.com/tv/show/${fid}?from=api`;
+      const resp = await (getPageWindow() as any).fetch(tvUrl, {
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'include'
+      });
+      const json = await resp.json();
+      const urls = json?.data?.urls;
+      if (urls && typeof urls === 'object') {
+        const sorted = Object.entries(urls as Record<string, string>)
+          .sort(([a], [b]) => {
+            const rank = (k: string) => k.includes('ld') ? 0 : k.includes('hd') ? 1 : k.includes('ori') ? 2 : 0;
+            return rank(b) - rank(a);
+          });
+        if (sorted.length > 0) {
+          return {
+            type: 'video',
+            title: json.data?.title || '微博视频',
+            desc: '',
+            author: {},
+            cover: '',
+            url: sorted[0][1],
+            video_backup: sorted.slice(1).map(e => e[1]),
+            platform: 'weibo',
+            sourceUrl: url
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // DOM video fallback: also check performance entries for weibo CDN mp4
+  const video = getBestVisibleVideo();
+  const directSrc = (() => {
+    const src = video?.currentSrc || video?.src;
+    if (src && src.startsWith('http') && !src.includes('blob:')) return src;
+    // weibo uses video.js HLS, look for mp4 in performance entries
+    try {
+      const perf = performance.getEntriesByType('resource')
+        .map(e => e.name)
+        .filter(n => /\.mp4/i.test(n) && /weibo|sinaimg|weibocdn|sinastorage|scloud/i.test(n));
+      if (perf.length > 0) return perf[perf.length - 1];
+    } catch {}
+    return null;
+  })();
+  if (directSrc) {
+    const weiboTitle = '微博视频';
+    const weiboAuthor = {};
+    return {
+      type: 'video',
+      title: weiboTitle,
+      desc: '',
+      author: weiboAuthor,
+      cover: video?.poster || '',
+      url: directSrc,
+      platform: 'weibo',
+      sourceUrl: url
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 今日头条本地解析
+// ---------------------------------------------------------------------------
+function parseToutiaoWindowState(url: string): ShortVideoData | null {
+  const win = getPageWindow();
+  const stateKeys = ['__INITIAL_STATE__', 'SSR_HYDRATION_DATA', '__pageData', 'detailSSRData', '__tt_spa_initial_state__', 'APP_INITIAL_DATA', 'PAGE_SSR_DATA'];
+
+  const extract = (value: any, depth: number, seen: WeakSet<object>): ShortVideoData | null => {
+    if (depth > 8 || !value || typeof value !== 'object') return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    // toutiao video structure: .video_list (object of quality variants)
+    if (value.video_list && typeof value.video_list === 'object' && !Array.isArray(value.video_list)) {
+      const entries = Object.values(value.video_list as Record<string, any>);
+      const best = entries.sort((a: any, b: any) => (b.definition || 0) - (a.definition || 0))[0];
+      if (best?.main_url || best?.play_url) {
+        const videoUrl = best.main_url || best.play_url;
+        try {
+          return {
+            type: 'video',
+            title: value.title || value.abstract || document.title.replace(/[-|]?\s*今日头条.*$/i, '').trim() || '头条视频',
+            desc: value.abstract || '',
+            author: { name: value.user_info?.name || value.source || '' },
+            cover: value.detail_video_large_image?.url || value.thumb_image_list?.[0]?.url || '',
+            url: decodeURIComponent(videoUrl),
+            platform: 'toutiao',
+            sourceUrl: url
+          };
+        } catch { /* decodeURIComponent can throw */ }
+      }
+    }
+    // .mediaInfo or .videoInfo structure
+    const mediaInfo = value.mediaInfo || value.videoInfo;
+    if (mediaInfo?.mp4_url || mediaInfo?.mp4_play_url || mediaInfo?.video_url) {
+      const videoUrl = mediaInfo.mp4_url || mediaInfo.mp4_play_url || mediaInfo.video_url;
+      return {
+        type: 'video',
+        title: mediaInfo?.title || value.title || '头条视频',
+        desc: '',
+        author: { name: mediaInfo?.user_info?.name || '' },
+        cover: mediaInfo?.poster || mediaInfo?.cover?.url || '',
+        url: videoUrl,
+        platform: 'toutiao',
+        sourceUrl: url
+      };
+    }
+    // direct play_url / mp4_url on a node
+    if ((value.play_url || value.mp4_url) && (value.title || value.abstract)) {
+      const videoUrl = value.play_url || value.mp4_url;
+      return {
+        type: 'video',
+        title: value.title || value.abstract || '头条视频',
+        desc: value.abstract || '',
+        author: { name: value.user_info?.name || value.source || '' },
+        cover: value.cover?.url || value.thumb_image_list?.[0]?.url || '',
+        url: videoUrl,
+        platform: 'toutiao',
+        sourceUrl: url
+      };
+    }
+
+    const entries2 = Object.entries(value).slice(0, 100);
+    for (const [, v] of entries2) {
+      const r = extract(v, depth + 1, seen);
+      if (r) return r;
+    }
+    return null;
+  };
+
+  const seen = new WeakSet<object>();
+  for (const key of stateKeys) {
+    try {
+      const r = extract(win[key], 0, seen);
+      if (r) return r;
+    } catch {}
+  }
+
+  // Try page script tags for JSON data
+  try {
+    const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script:not([src])'));
+    for (const script of scripts) {
+      const text = script.textContent || '';
+      if (!text.includes('video_list') && !text.includes('videoInfo')) continue;
+      const match = text.match(/window\.__INITIAL_STATE__\s*=\s*(\{.+?\});?\s*(?:window|$)/s);
+      if (match?.[1]) {
+        try {
+          const parsed = JSON.parse(match[1]);
+          const r = extract(parsed, 0, new WeakSet());
+          if (r) return r;
+        } catch {}
+      }
+    }
+  } catch {}
+  return null;
+}
+
+async function parseToutiaoLocal(url: string): Promise<ShortVideoData | null> {
+  const immediate = parseToutiaoWindowState(url);
+  if (immediate) return immediate;
+
+  // Poll
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 300));
+    const result = parseToutiaoWindowState(url);
+    if (result) return result;
+
+    // Also try DOM video
+    const v = getBestVisibleVideo();
+    const src = v?.currentSrc;
+    if (src && src.startsWith('http') && !src.includes('blob:')) {
+      return {
+        type: 'video',
+        title: document.title.replace(/[-|]?\s*今日头条.*$/i, '').trim() || '头条视频',
+        desc: '',
+        author: {},
+        cover: v?.poster || '',
+        url: src,
+        platform: 'toutiao',
+        sourceUrl: url
+      };
+    }
+  }
+
+  // Final DOM fallback
+  const v = getBestVisibleVideo();
+  const src = v?.currentSrc || v?.src;
+  if (src && src.startsWith('http') && !src.includes('blob:')) {
+    return {
+      type: 'video',
+      title: document.title.replace(/[-|]?\s*今日头条.*$/i, '').trim() || '头条视频',
+      desc: '',
+      author: {},
+      cover: v?.poster || '',
+      url: src,
+      platform: 'toutiao',
+      sourceUrl: url
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 皮皮搞笑本地解析
+// ---------------------------------------------------------------------------
+async function parsePipigxLocal(url: string): Promise<ShortVideoData | null> {
+  const win = getPageWindow();
+
+  const extract = (value: any, depth: number, seen: WeakSet<object>): ShortVideoData | null => {
+    if (depth > 8 || !value || typeof value !== 'object') return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+    if (value.video_url || value.play_url || value.videoUrl) {
+      const videoUrl = normalizeUrl(value.video_url || value.play_url || value.videoUrl);
+      if (videoUrl) {
+        return {
+          type: 'video',
+          title: value.title || value.content || document.title || '皮皮搞笑视频',
+          desc: value.content || '',
+          author: { name: value.author?.name || value.user?.name || '' },
+          cover: normalizeUrl(value.cover || value.thumb || ''),
+          url: videoUrl,
+          platform: 'pipigx',
+          sourceUrl: url
+        };
+      }
+    }
+    for (const [, v] of Object.entries(value).slice(0, 100)) {
+      const r = extract(v, depth + 1, seen);
+      if (r) return r;
+    }
+    return null;
+  };
+
+  const stateKeys = ['__INITIAL_STATE__', '__NUXT__', 'APP_INITIAL_STATE'];
+  for (const key of stateKeys) {
+    try {
+      const r = extract(win[key], 0, new WeakSet());
+      if (r) return r;
+    } catch {}
+  }
+
+  // Poll DOM
+  for (let i = 0; i < 8; i++) {
+    const v = getBestVisibleVideo();
+    const src = v?.currentSrc || v?.src;
+    if (src && src.startsWith('http')) {
+      return {
+        type: 'video',
+        title: document.title || '皮皮搞笑视频',
+        desc: '',
+        author: {},
+        cover: v?.poster || '',
+        url: src,
+        platform: 'pipigx',
+        sourceUrl: url
+      };
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return null;
 }
 
 export const ShortVideoAPI = {
@@ -559,66 +1057,328 @@ export const ShortVideoAPI = {
     };
   },
 
-  getProxyUrl(url: string, platform: ShortVideoPlatform): string | null {
-    const config = this.getPlatformConfig(platform);
-    if (!config.proxyType) return null;
-    if (!/^https?:\/\//i.test(url)) return null;
-    if (/api\.bugpk\.com\/api\/(?:weibo|svproxyurl)\.php/i.test(url) || /api\.bugpk\.com\/api\/weibo\?/i.test(url)) return null;
-    return `${CONFIG.SHORT_VIDEO_API_BASE}/svproxyurl.php?proxyurl=${encodeURIComponent(url)}&type=${config.proxyType}`;
+  getProxyUrl(_url: string, _platform: ShortVideoPlatform): string | null {
+    return null;
   },
 
-  async parseUrl(url: string, platform: ShortVideoPlatform): Promise<ShortVideoData> {
-    const config = this.getPlatformConfig(platform);
-    const parseUrls = getResolvableUrls(url, platform);
-    const endpoints = getEndpointCandidates(config.endpoint, config.fallbackEndpoints);
-    const collectedItems: ShortVideoData[] = [];
-    let lastError: Error | null = null;
+  normalizeDouyinDetail(detail: DouyinAwemeDetail, url: string): ShortVideoData {
+    const qualities = DouyinInterceptor.extractQualities(detail);
+    const primaryUrl = qualities[0]?.url || '';
+    const backupUrls = qualities.slice(1).map(q => q.url);
+    const video = detail.video;
+    const cover = video?.cover?.url_list?.find(u => u.startsWith('http')) || '';
+    const avatarUrl = detail.author?.avatar_thumb?.url_list?.find(u => u.startsWith('http')) || '';
+    const musicUrl = detail.music?.play_url?.url_list?.find(u => u.startsWith('http')) || detail.music?.play_url?.uri || '';
+    const musicCover = detail.music?.cover_medium?.url_list?.find(u => u.startsWith('http')) || '';
 
-    if (platform === 'weibo' && isWeiboNonContentPage(url, parseUrls)) {
-      throw new Error('当前微博页面不是具体视频内容页，请打开视频详情页后再试');
-    }
+    const items: ShortVideoData[] = qualities.map(q => ({
+      type: 'video' as const,
+      title: detail.desc || '抖音视频',
+      desc: detail.desc || '',
+      author: { name: detail.author?.nickname || '', id: detail.author?.uid || '', avatar: avatarUrl },
+      cover,
+      url: q.url,
+      video_backup: [],
+      duration: video?.duration ? video.duration / 1000 : null,
+      music: musicUrl ? { title: detail.music?.title, author: detail.music?.author, url: musicUrl, cover: musicCover } : undefined,
+      platform: 'douyin' as const,
+      sourceUrl: url,
+      itemLabel: q.label
+    }));
 
-    if (platform === 'kuaishou' && isKuaishouFeedPage(url)) {
-      const domFallback = getKuaishouDomMediaFallback(url);
-      if (domFallback) return combineShortVideoItems([domFallback], platform, url);
-    }
+    return {
+      type: 'video',
+      title: detail.desc || '抖音视频',
+      desc: detail.desc || '',
+      author: { name: detail.author?.nickname || '', id: detail.author?.uid || '', avatar: avatarUrl },
+      cover,
+      url: primaryUrl,
+      video_backup: backupUrls,
+      duration: video?.duration ? video.duration / 1000 : null,
+      music: musicUrl ? { title: detail.music?.title, author: detail.music?.author, url: musicUrl, cover: musicCover } : undefined,
+      platform: 'douyin',
+      sourceUrl: url,
+      items: items.length > 1 ? items : undefined
+    };
+  },
 
-    for (const parseUrl of parseUrls) {
-      for (const endpoint of endpoints) {
-        const apiUrl = `${CONFIG.SHORT_VIDEO_API_BASE}/${endpoint}?url=${encodeURIComponent(parseUrl)}`;
+  async parseDouyinLocal(url: string, waitMs = 3000): Promise<ShortVideoData | null> {
+    const extractAwemeId = (u: string): string | null => {
+      try {
+        const p = new URL(u);
+        return p.searchParams.get('modal_id')
+          || p.searchParams.get('aweme_id')
+          || p.pathname.match(/\/(?:video|note)\/(\d{15,20})/)?.[1]
+          || null;
+      } catch {
+        return null;
+      }
+    };
 
-        try {
-          const response = await Network.fetchJSON(apiUrl) as ShortVideoApiResponse;
-          const code = Number(response?.code);
-          if (!response || !Number.isFinite(code)) {
-            throw new Error('解析接口返回异常');
-          }
-          if (code !== 200) {
-            throw new Error(response.msg || '解析失败');
-          }
-          const normalized = this.normalizeResponse(response.data, platform, parseUrl);
-          collectedItems.push(...(normalized.items?.length ? normalized.items : [normalized]));
-          break;
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error));
+    const AWEME_ID_RE = /\b(\d{15,20})\b/;
+
+    // 沿 fiber.return 链向上扫描 props 中的 aweme_id
+    const scanFiberChain = (fiber: any): string | null => {
+      for (let i = 0; i < 60 && fiber; i++) {
+        const props = fiber.memoizedProps || fiber.pendingProps;
+        if (props) {
+          const id = props.aweme_id || props.awemeId || props.itemId || props.videoId
+            || props.item?.aweme_id || props.item?.awemeId
+            || props.aweme?.aweme_id || props.video?.aweme_id
+            || props.data?.aweme_id || props.awemeInfo?.aweme_id
+            || props.feedItem?.aweme_id || props.videoData?.aweme_id;
+          if (id && AWEME_ID_RE.test(String(id))) return String(id).match(AWEME_ID_RE)![1];
+        }
+        fiber = fiber.return;
+      }
+      return null;
+    };
+
+    // 从 DOM 父节点树逐层向上找，对每个挂了 fiber 的元素扫 fiber 链
+    const extractFromDomFibers = (startEl: Element | null): string | null => {
+      let el: Element | null = startEl;
+      while (el && el !== document.documentElement) {
+        const fiberKey = Object.keys(el as object).find(
+          k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
+        );
+        if (fiberKey) {
+          const found = scanFiberChain((el as any)[fiberKey]);
+          if (found) return found;
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    // 从 DOM 元素属性、href 链接、React fiber 中提取 aweme_id
+    const extractAwemeIdFromDom = (): string | null => {
+      const video = getBestVisibleVideo();
+
+      // 1. 最可靠方法：class 名 video_{aweme_id}（推荐页每个视频卡片的 sliderVideo 容器）
+      // 先从当前可见视频向上找
+      let el2: Element | null = video;
+      while (el2 && el2 !== document.documentElement) {
+        const m = el2.className?.match?.(/\bvideo_(\d{15,20})\b/);
+        if (m?.[1]) return m[1];
+        el2 = el2.parentElement;
+      }
+      // 全页扫描 class 名，但取可见面积最大的那个
+      const classMatches = Array.from(document.querySelectorAll<HTMLElement>('[class*="video_"]'));
+      let bestClassEl: HTMLElement | null = null;
+      let bestArea = 0;
+      for (const el of classMatches) {
+        const m = el.className.match(/\bvideo_(\d{15,20})\b/);
+        if (!m?.[1]) continue;
+        const r = el.getBoundingClientRect();
+        const visW = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+        const visH = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+        const area = visW * visH;
+        if (area > bestArea) { bestArea = area; bestClassEl = el; }
+      }
+      if (bestClassEl) {
+        const m = bestClassEl.className.match(/\bvideo_(\d{15,20})\b/);
+        if (m?.[1]) return m[1];
+      }
+
+      // 2. data-e2e-vid 属性——同样取可见面积最大的
+      const eVidEls = Array.from(document.querySelectorAll<HTMLElement>('[data-e2e-vid]'));
+      let bestEVid: HTMLElement | null = null;
+      let bestEArea = 0;
+      for (const el of eVidEls) {
+        const r = el.getBoundingClientRect();
+        const visW = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+        const visH = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+        const area = visW * visH;
+        if (area > bestEArea) { bestEArea = area; bestEVid = el; }
+      }
+      if (bestEVid) {
+        const vid = bestEVid.getAttribute('data-e2e-vid');
+        if (vid && AWEME_ID_RE.test(vid)) return vid.match(AWEME_ID_RE)![1];
+      }
+
+      // 3. React fiber 扫描：从视频元素逐层向上找到挂了 fiber 的祖先，再沿 fiber 链向上扫
+      const fiberId = extractFromDomFibers(video);
+      if (fiberId) return fiberId;
+
+      // 2. data-aweme-id / data-id 属性扫描
+      const dataAttrs = ['data-aweme-id', 'data-item-id', 'data-awemeid', 'data-id', 'data-video-id'];
+      const allElements = Array.from(document.querySelectorAll<HTMLElement>('[data-aweme-id],[data-item-id],[data-awemeid]'));
+      for (const el of allElements) {
+        for (const attr of dataAttrs) {
+          const val = el.getAttribute(attr);
+          if (val && AWEME_ID_RE.test(val)) return val.match(AWEME_ID_RE)![1];
         }
       }
 
-      if (collectedItems.length > 0 && platform !== 'weibo') {
-        return combineShortVideoItems(collectedItems, platform, url);
+      // 3. 从视频元素父节点树中找 data-* 和 a[href] 链接
+      let el: Element | null = video;
+      for (let depth = 0; depth < 15 && el; depth++) {
+        for (const attr of dataAttrs) {
+          const val = el.getAttribute(attr);
+          if (val && AWEME_ID_RE.test(val)) return val.match(AWEME_ID_RE)![1];
+        }
+        const link = el.querySelector<HTMLAnchorElement>('a[href*="/video/"],a[href*="/note/"]');
+        if (link) {
+          const m = link.getAttribute('href')?.match(/\/(?:video|note)\/(\d{15,20})/);
+          if (m?.[1]) return m[1];
+        }
+        el = el.parentElement;
+      }
+
+      // 4. 全页 a[href] 链接
+      const allLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/video/"],a[href*="/note/"]'));
+      for (const link of allLinks) {
+        const m = link.getAttribute('href')?.match(/\/(?:video|note)\/(\d{15,20})/);
+        if (m?.[1]) return m[1];
+      }
+
+      // 5. 从全局 feed 状态扫描（推荐页 SSR 数据）
+      const feedId = DouyinInterceptor.getAwemeIdFromFeed();
+      if (feedId) return feedId;
+
+      return null;
+    };
+
+    const awemeIdFromUrl = extractAwemeId(url);
+
+    // 方案4 快速路径：URL 中有 aweme_id 则立即请求官方 API
+    if (awemeIdFromUrl) {
+      const detail = await DouyinInterceptor.fetchDetail(awemeIdFromUrl);
+      if (detail) {
+        const data = this.normalizeDouyinDetail(detail, url);
+        if (data.url) return data;
       }
     }
 
-    if (collectedItems.length > 0) {
-      return combineShortVideoItems(collectedItems, platform, url);
+    // URL 无 aweme_id（推荐页）：先从 DOM 提取当前视频 id，从缓存精确命中
+    if (!awemeIdFromUrl) {
+      const domId = extractAwemeIdFromDom();
+      if (domId) {
+        const cached = DouyinInterceptor.getByAwemeId(domId);
+        if (cached) {
+          const data = this.normalizeDouyinDetail(cached, url);
+          if (data.url) return data;
+        }
+        // 缓存未命中则直接调 API
+        const detail = await DouyinInterceptor.fetchDetail(domId);
+        if (detail) {
+          const data = this.normalizeDouyinDetail(detail, url);
+          if (data.url) return data;
+        }
+      }
     }
 
+    // 方案2+3+1：轮询等待
+    const interval = 300;
+    const maxTries = Math.ceil(waitMs / interval);
+    let lastDomIdFetched: string | null = null;
+
+    for (let i = 0; i < maxTries; i++) {
+      const detail = DouyinInterceptor.getByUrl(url);
+      if (detail) {
+        const data = this.normalizeDouyinDetail(detail, url);
+        if (data.url) return data;
+      }
+
+      const dom = DouyinInterceptor.getFromDom();
+      if (dom?.url) {
+        return {
+          type: 'video',
+          title: document.title.replace(/[-_|｜]?\s*抖音.*$/i, '').trim() || '抖音视频',
+          desc: '',
+          cover: dom.cover,
+          url: dom.url,
+          video_backup: [],
+          platform: 'douyin',
+          sourceUrl: url,
+          itemLabel: '当前播放'
+        };
+      }
+
+      // 方案4：URL 无 aweme_id 时，从 DOM 链接提取并调 API（推荐页场景）
+      if (!awemeIdFromUrl) {
+        const domId = extractAwemeIdFromDom();
+        if (domId && domId !== lastDomIdFetched) {
+          lastDomIdFetched = domId;
+          const detail2 = await DouyinInterceptor.fetchDetail(domId);
+          if (detail2) {
+            const data = this.normalizeDouyinDetail(detail2, location.href);
+            if (data.url) return data;
+          }
+        }
+      }
+
+      if (i < maxTries - 1) {
+        await new Promise(resolve => setTimeout(resolve, interval));
+      }
+    }
+
+    // 方案4 最终兜底：从 location.href 提取
+    if (!awemeIdFromUrl) {
+      const fallbackId = extractAwemeId(location.href);
+      if (fallbackId) {
+        const detail = await DouyinInterceptor.fetchDetail(fallbackId);
+        if (detail) {
+          const data = this.normalizeDouyinDetail(detail, location.href);
+          if (data.url) return data;
+        }
+      }
+    }
+
+    return null;
+  },
+
+  async parseUrl(url: string, platform: ShortVideoPlatform): Promise<ShortVideoData> {
+    // 抖音：纯本地方案
+    if (platform === 'douyin') {
+      const local = await this.parseDouyinLocal(url);
+      if (local) return local;
+      throw new Error('解析失败，无法获取抖音视频信息');
+    }
+
+    // 快手
     if (platform === 'kuaishou') {
-      const domFallback = getKuaishouDomMediaFallback(url);
-      if (domFallback) return combineShortVideoItems([domFallback], platform, url);
+      if (isKuaishouFeedPage(url)) {
+        const dom = getKuaishouDomMediaFallback(url);
+        if (dom) return combineShortVideoItems([dom], platform, url);
+      }
+      const local = await parseKuaishouLocal(url);
+      if (local) return combineShortVideoItems([local], platform, url);
+      throw new Error('解析失败，无法获取快手视频');
     }
 
-    throw lastError || new Error('解析失败');
+    // 小红书
+    if (platform === 'xiaohongshu') {
+      const local = await parseXhsLocal(url);
+      if (local) return combineShortVideoItems([local], platform, url);
+      throw new Error('解析失败，无法获取小红书内容');
+    }
+
+    // 微博
+    if (platform === 'weibo') {
+      const local = await parseWeiboLocal(url);
+      if (local) return combineShortVideoItems([local], platform, url);
+      if (isWeiboNonContentPage(url, [url])) {
+        throw new Error('请打开微博视频详情页后再试');
+      }
+      throw new Error('解析失败，无法获取微博视频');
+    }
+
+    // 今日头条
+    if (platform === 'toutiao') {
+      const local = await parseToutiaoLocal(url);
+      if (local) return combineShortVideoItems([local], platform, url);
+      throw new Error('解析失败，无法获取头条视频');
+    }
+
+    // 皮皮搞笑
+    if (platform === 'pipigx') {
+      const local = await parsePipigxLocal(url);
+      if (local) return combineShortVideoItems([local], platform, url);
+      throw new Error('解析失败，无法获取皮皮搞笑视频');
+    }
+
+    throw new Error('不支持的平台');
   },
 
   normalizeResponse(raw: ShortVideoApiResponse['data'], platform: ShortVideoPlatform, url: string): ShortVideoData {

@@ -7,6 +7,7 @@ import { CompleteEffect } from './complete-effect.ts';
 import { UI } from './ui.ts';
 import { CONFIG } from './config.ts';
 import { Network } from './network.ts';
+import { Diagnostics } from './diagnostics.ts';
 import type {
   VideoInfo,
   PageInfo,
@@ -128,7 +129,7 @@ export const Downloader = {
 
             if (ugcInfo.hasUGC && ugcInfo.episodes) {
               this.videoInfo!.ugcEpisodes = ugcInfo.episodes;
-              UI.prepareUGCSection(ugcInfo.episodes, () => this.updateSelectedUGC());
+              UI.prepareUGCSection(ugcInfo.episodes, () => this.updateSelectedUGC(), pageInfo.cid);
               this.selectedUGCEpisodes = [];
             } else {
               UI.hideUGCSection();
@@ -158,6 +159,7 @@ export const Downloader = {
       });
     }).catch(error => {
       console.error('获取视频信息失败:', error);
+      Diagnostics.error('downloader', '获取视频信息失败', error);
       UI.showAlert('获取视频信息失败: ' + error.message, 'error');
       UI.positionPopup();
     });
@@ -183,8 +185,13 @@ export const Downloader = {
       UI.positionPopup();
       return true;
     }).catch(error => {
-      if (options.silent) console.warn('短视频解析跳过:', error);
-      else console.error('短视频解析失败:', error);
+      if (options.silent) {
+        console.warn('短视频解析跳过:', error);
+        Diagnostics.debug('short-video', `解析跳过 (${platform})`, error);
+      } else {
+        console.error('短视频解析失败:', error);
+        Diagnostics.error('short-video', `解析失败 (${platform})`, error);
+      }
 
       this.shortVideoInfo = null;
       this.shortVideoItems = [];
@@ -316,6 +323,7 @@ export const Downloader = {
         else downloadNext(index + 1);
       }).catch(error => {
         console.error('下载失败:', error);
+        Diagnostics.error('downloader', `下载失败 (task ${index + 1}/${allTasks.length}): ${error?.message ?? error}`, error);
         UI.showAlert('下载失败: ' + error.message, 'error');
         this.resetDownloadingState();
         UI.updateCircleProgress(0);
@@ -344,7 +352,7 @@ export const Downloader = {
       return;
     }
 
-    if (!this.shortVideoInfo || this.shortVideoPageUrl !== location.href || !platform) {
+    if (!this.shortVideoInfo || !platform) {
       if (!platform) {
         UI.showAlert('当前页面暂不支持', 'warning');
         return;
@@ -358,18 +366,19 @@ export const Downloader = {
       });
       return;
     }
+    // URL 变化但已有解析结果（如精选页 modal_id 消失）时直接使用缓存数据
 
-    this.runShortVideoTask(this.createShortVideoTask(this.shortVideoInfo, platform, location.href));
+    this.runShortVideoTask(this.createShortVideoTask(this.shortVideoInfo, platform, this.shortVideoPageUrl || location.href));
   },
 
   prepareShortVideoTask(platform: ShortVideoPlatform): Promise<ShortVideoDownloadTask | null> {
-    if (this.shortVideoInfo && this.shortVideoPageUrl === location.href) {
-      return Promise.resolve(this.createShortVideoTask(this.shortVideoInfo, platform, location.href));
+    if (this.shortVideoInfo) {
+      return Promise.resolve(this.createShortVideoTask(this.shortVideoInfo, platform, this.shortVideoPageUrl || location.href));
     }
 
     return this.refreshShortVideoInfo(platform, { silent: false }).then(success => {
       if (!success || !this.shortVideoInfo) return null;
-      return this.createShortVideoTask(this.shortVideoInfo, platform, location.href);
+      return this.createShortVideoTask(this.shortVideoInfo, platform, this.shortVideoPageUrl || location.href);
     });
   },
 
@@ -464,6 +473,7 @@ export const Downloader = {
       this.finishShortVideoTask('下载完成！');
     }).catch(error => {
       console.error('下载失败:', error);
+      Diagnostics.error('short-video-download', '短视频下载失败', error);
       UI.showAlert('下载失败: ' + error.message, 'error');
       const hasQueuedTask = this.shortVideoQueue.length > 0;
       this.resetDownloadingState();
@@ -560,6 +570,7 @@ export const Downloader = {
           }
         }).catch(mergeError => {
           console.error('合并失败:', mergeError);
+          Diagnostics.error('merge', `合并失败（method=${MergeManager.currentMethod}），已回退分离保存`, mergeError);
           UI.showAlert('合并失败，已分别保存。错误: ' + mergeError.message, 'warning');
           this.saveSeparate(buffers.videoBuffer, buffers.audioBuffer!, filename);
         });

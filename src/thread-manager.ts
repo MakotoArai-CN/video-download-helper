@@ -15,7 +15,6 @@ export const ThreadManager = {
       this.maxThreads = Math.floor(cores * 0.6);
       if (this.maxThreads % 2 !== 0) this.maxThreads -= 1;
     }
-    console.log('线程管理器初始化，最大线程数:', this.maxThreads);
   },
 
   canRunTask(): boolean {

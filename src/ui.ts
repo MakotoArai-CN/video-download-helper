@@ -1,6 +1,7 @@
 import { STYLES } from './styles.ts';
 import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
+import { Diagnostics, type DiagnosticEntry } from './diagnostics.ts';
 import type {
   VideoInfo,
   PageInfo,
@@ -62,7 +63,6 @@ const PLATFORM_LABELS: Record<ShortVideoPlatform, string> = {
   xiaohongshu: '小红书',
   weibo: '微博',
   toutiao: '今日头条',
-  pipixia: '皮皮虾',
   pipigx: '皮皮搞笑'
 };
 
@@ -206,7 +206,38 @@ function makePopup(): string {
       <div class="bdl-alert" id="bdl-alert"></div>
       <button class="bdl-download-btn" id="bdl-download" type="button"><span>开始下载</span></button>
     </div>
-    <div class="bdl-footer" id="bdl-footer">仅供学习研究，请支持正版内容创作者</div>
+    <div class="bdl-footer" id="bdl-footer">
+      <span class="bdl-footer-text">仅供学习研究，请支持正版内容创作者</span>
+      <button class="bdl-diag-trigger" id="bdl-diag-trigger" type="button" title="遇到问题？打开诊断面板">诊断</button>
+    </div>
+  </div>`;
+}
+
+function makeDiagModal(): string {
+  return `<div class="bdl-diag-modal" id="bdl-diag-modal" role="dialog" aria-modal="true" aria-labelledby="bdl-diag-title">
+    <div class="bdl-diag-card">
+      <div class="bdl-diag-header">
+        <span class="bdl-diag-title" id="bdl-diag-title">智能诊断</span>
+        <button class="bdl-diag-close" id="bdl-diag-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="bdl-diag-body">
+        <div class="bdl-diag-desc">
+          遇到下载失败、解析异常或功能不可用？可以在下方描述你的操作、期望结果，然后一键复制或提交诊断报告给开发者。
+          日志已自动屏蔽 <code>SESSDATA</code> / <code>bili_jct</code> / <code>token</code> 等常见敏感字段，建议提交前再自行确认。
+        </div>
+        <label class="bdl-diag-note-label" for="bdl-diag-note">问题描述（可选）</label>
+        <textarea class="bdl-diag-note" id="bdl-diag-note" placeholder="例：在 xxx 视频页点下载后卡在合并阶段..."></textarea>
+        <div class="bdl-diag-toolbar">
+          <button class="bdl-diag-btn primary" id="bdl-diag-submit" type="button">提交到 GitHub</button>
+          <button class="bdl-diag-btn" id="bdl-diag-copy" type="button">复制报告</button>
+          <button class="bdl-diag-btn" id="bdl-diag-download" type="button">下载报告</button>
+          <div class="bdl-diag-toolbar-spacer"></div>
+          <button class="bdl-diag-btn danger" id="bdl-diag-clear" type="button">清空日志</button>
+        </div>
+        <div class="bdl-diag-toast" id="bdl-diag-toast"></div>
+        <div class="bdl-diag-log" id="bdl-diag-log"></div>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -263,8 +294,13 @@ export const UI = {
     panel.id = 'bdl-panel';
     panel.innerHTML = makePopup();
 
+    const diagHost = document.createElement('div');
+    diagHost.id = 'bdl-diag-host';
+    diagHost.innerHTML = makeDiagModal();
+
     root.appendChild(entry);
     root.appendChild(panel);
+    root.appendChild(diagHost);
     document.body.appendChild(host);
 
     this.host = host;
@@ -319,8 +355,139 @@ export const UI = {
       tips: g('bdl-tips'),
       tipsContent: g('bdl-tips-content'),
       progressCircle: g('bdl-progress-circle'),
-      footer: g('bdl-footer')
+      footer: g('bdl-footer'),
+      diagTrigger: g('bdl-diag-trigger'),
+      diagModal: g('bdl-diag-modal'),
+      diagClose: g('bdl-diag-close'),
+      diagNote: g('bdl-diag-note'),
+      diagSubmit: g('bdl-diag-submit'),
+      diagCopy: g('bdl-diag-copy'),
+      diagDownload: g('bdl-diag-download'),
+      diagClear: g('bdl-diag-clear'),
+      diagToast: g('bdl-diag-toast'),
+      diagLog: g('bdl-diag-log')
     };
+
+    this.bindDiagnosticHandlers();
+  },
+
+  diagUnsubscribe: null as (() => void) | null,
+  diagToastTimer: null as number | null,
+
+  bindDiagnosticHandlers(): void {
+    const el = this.elements;
+    const trigger = el.diagTrigger as HTMLElement | null;
+    const modal = el.diagModal as HTMLElement | null;
+    const close = el.diagClose as HTMLElement | null;
+    const submit = el.diagSubmit as HTMLElement | null;
+    const copy = el.diagCopy as HTMLElement | null;
+    const download = el.diagDownload as HTMLElement | null;
+    const clear = el.diagClear as HTMLElement | null;
+
+    trigger?.addEventListener('click', event => {
+      event.stopPropagation();
+      this.showDiagModal();
+    });
+
+    close?.addEventListener('click', () => this.hideDiagModal());
+
+    modal?.addEventListener('click', event => {
+      if (event.target === modal) this.hideDiagModal();
+    });
+
+    submit?.addEventListener('click', () => {
+      const note = (el.diagNote as HTMLTextAreaElement | null)?.value || '';
+      const url = Diagnostics.buildIssueUrl(note);
+      try {
+        window.open(url, '_blank', 'noopener');
+        this.showDiagToast('已在新标签页打开 GitHub Issue', 'success');
+      } catch {
+        this.showDiagToast('无法打开新标签页，请手动复制报告后到仓库提交 Issue', 'error');
+      }
+    });
+
+    copy?.addEventListener('click', async () => {
+      const note = (el.diagNote as HTMLTextAreaElement | null)?.value || '';
+      const ok = await Diagnostics.copyReport(note);
+      this.showDiagToast(ok ? '诊断报告已复制到剪贴板' : '复制失败，请尝试下载报告', ok ? 'success' : 'error');
+    });
+
+    download?.addEventListener('click', () => {
+      const note = (el.diagNote as HTMLTextAreaElement | null)?.value || '';
+      Diagnostics.downloadReport(note);
+      this.showDiagToast('已下载 Markdown 报告', 'success');
+    });
+
+    clear?.addEventListener('click', () => {
+      Diagnostics.clear();
+      this.showDiagToast('日志已清空', 'success');
+    });
+  },
+
+  showDiagModal(): void {
+    const modal = this.elements.diagModal as HTMLElement | null;
+    if (!modal) return;
+    modal.classList.add('show');
+    this.showDiagToast('', 'success');
+    if (!this.diagUnsubscribe) {
+      this.diagUnsubscribe = Diagnostics.subscribe(entries => this.renderDiagLog(entries));
+    }
+  },
+
+  hideDiagModal(): void {
+    const modal = this.elements.diagModal as HTMLElement | null;
+    if (!modal) return;
+    modal.classList.remove('show');
+    if (this.diagUnsubscribe) {
+      this.diagUnsubscribe();
+      this.diagUnsubscribe = null;
+    }
+  },
+
+  renderDiagLog(entries: DiagnosticEntry[]): void {
+    const log = this.elements.diagLog as HTMLElement | null;
+    if (!log) return;
+    log.textContent = '';
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'bdl-diag-log-empty';
+      empty.textContent = '(暂无日志)';
+      log.appendChild(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const entry of entries) {
+      const line = document.createElement('span');
+      line.className = `bdl-diag-log-line level-${entry.level}`;
+      const timestamp = new Date(entry.time).toLocaleTimeString('zh-CN', { hour12: false });
+      line.textContent = `[${timestamp}] [${entry.level.toUpperCase()}] [${entry.scope}] ${entry.message}`;
+      frag.appendChild(line);
+      if (entry.detail) {
+        const detail = document.createElement('span');
+        detail.className = 'bdl-diag-log-detail';
+        detail.textContent = entry.detail;
+        frag.appendChild(detail);
+      }
+    }
+    log.appendChild(frag);
+    log.scrollTop = log.scrollHeight;
+  },
+
+  showDiagToast(message: string, kind: 'success' | 'error'): void {
+    const toast = this.elements.diagToast as HTMLElement | null;
+    if (!toast) return;
+    toast.textContent = message;
+    toast.className = `bdl-diag-toast${kind === 'error' ? ' error' : ''}`;
+    if (this.diagToastTimer !== null) {
+      clearTimeout(this.diagToastTimer);
+      this.diagToastTimer = null;
+    }
+    if (message) {
+      this.diagToastTimer = window.setTimeout(() => {
+        toast.textContent = '';
+        this.diagToastTimer = null;
+      }, 3500);
+    }
   },
 
   query<T extends Element = Element>(selector: string): T | null {
@@ -524,10 +691,16 @@ export const UI = {
     }
     entry.classList.toggle('is-downloading', this.entryProgressActive);
 
+    // 让 B 站 header 能覆盖工具栏按钮（跟官方按钮一起藏），floating 场景保持最高层级
+    if (this.host) {
+      const isBili = mount.mode === 'video' || mount.mode === 'bangumi';
+      this.host.style.setProperty('z-index', isBili ? '90' : '2147483647', 'important');
+    }
+
     this.mountedAt = mount.container;
     this.currentMountMode = mount.mode;
     this.positionEntry(mount);
-    this.positionPopup();
+    if (!this.isPopupVisible()) this.positionPopup();
     this.syncEntryProgressVisibility();
     return true;
   },
@@ -576,16 +749,23 @@ export const UI = {
     if (left + width > window.innerWidth - viewportPadding) {
       left = baseRect.left - width - gap;
     }
+    // 水平钳制到 viewport 内（左右不会跟丢）
     left = Math.max(viewportPadding, Math.min(left, window.innerWidth - width - viewportPadding));
 
-    let top = baseRect.top + (baseRect.height - height) / 2;
-    top = Math.max(viewportPadding, Math.min(top, window.innerHeight - height - viewportPadding));
+    // 垂直方向严格跟随锚点，不做 viewport 钳制
+    // 这样滚动时按钮跟着锚点走，锚点被 header 遮住时按钮也会一起藏进 header
+    const top = baseRect.top + (baseRect.height - height) / 2;
+
+    // 检测锚点是否已完全离开可视区（或被 header 遮挡），此时隐藏按钮避免残留在 header 下方
+    const bilibiliHeaderHeight = 64;
+    const anchorBottom = baseRect.top + baseRect.height;
+    const isAnchorHidden = anchorBottom < bilibiliHeaderHeight || baseRect.top > window.innerHeight;
 
     entry.style.left = `${Math.round(left)}px`;
     entry.style.top = `${Math.round(top)}px`;
     entry.style.right = 'auto';
     entry.style.bottom = 'auto';
-    entry.style.visibility = 'visible';
+    entry.style.visibility = isAnchorHidden ? 'hidden' : 'visible';
   },
 
   showPopup(): void {
@@ -595,7 +775,14 @@ export const UI = {
 
     popup.classList.add('show');
     btn.setAttribute('aria-expanded', 'true');
+    this.popupManualPosition = null; // reset so positionPopup computes fresh
     this.positionPopup();
+    // lock the computed position so DOM mutations don't move the popup
+    if (!this.popupManualPosition) {
+      const left = parseFloat(popup.style.left) || 0;
+      const top = parseFloat(popup.style.top) || 0;
+      this.popupManualPosition = { left, top };
+    }
     this.syncEntryProgressVisibility();
   },
 
@@ -604,7 +791,13 @@ export const UI = {
     const btn = this.elements.btn as HTMLButtonElement | null;
     if (popup) popup.classList.remove('show');
     if (btn) btn.setAttribute('aria-expanded', 'false');
+    this.popupManualPosition = null; // allow fresh positioning next open
     this.syncEntryProgressVisibility();
+  },
+
+  isPopupVisible(): boolean {
+    const popup = this.elements.popup as HTMLElement | null;
+    return popup?.classList.contains('show') ?? false;
   },
 
   togglePopup(): boolean {
@@ -879,22 +1072,27 @@ export const UI = {
     onUpdate();
   },
 
-  prepareUGCSection(episodes: UGCEpisode[], onUpdate: () => void): void {
+  prepareUGCSection(episodes: UGCEpisode[], onUpdate: () => void, currentCid?: number): void {
+    const wasVisible = this.elements.ugcSection.classList.contains('show');
     this.ugcSectionEnabled = true;
     this.resetFooterSecret();
-    this.elements.ugcSection.classList.remove('show');
     this.elements.ugcCount.textContent = `共 ${episodes.length} 个视频`;
     this.elements.ugcList.innerHTML = '';
 
+    let currentItem: HTMLElement | null = null;
+
     episodes.forEach((ep, index) => {
+      const isCurrent = currentCid != null && ep.cid === currentCid;
+
       const item = document.createElement('div');
       item.className = 'bdl-page-item';
+      if (isCurrent) item.classList.add('active');
 
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'bdl-page-checkbox';
       cb.dataset.index = String(index);
-      cb.checked = false;
+      cb.checked = isCurrent;
 
       const info = document.createElement('div');
       info.className = 'bdl-page-info';
@@ -927,9 +1125,34 @@ export const UI = {
       });
 
       this.elements.ugcList.appendChild(item);
+      if (isCurrent) currentItem = item;
     });
 
     onUpdate();
+
+    // 保持原来的展开状态；初次加载时自动展开并定位到当前播放项
+    if (!wasVisible) {
+      if (currentItem) {
+        // 第一次：自动展开并定位
+        this.elements.ugcSection.classList.add('show');
+        requestAnimationFrame(() => {
+          const list = this.elements.ugcList as HTMLElement;
+          const item = currentItem as HTMLElement;
+          list.scrollTop = item.offsetTop - list.clientHeight / 2 + item.clientHeight / 2;
+        });
+      }
+      // currentItem が無い場合は閉じたままにする（既存動作維持）
+    } else {
+      // すでに展開済みなら展開状態を維持、定位だけ行う
+      this.elements.ugcSection.classList.add('show');
+      if (currentItem) {
+        requestAnimationFrame(() => {
+          const list = this.elements.ugcList as HTMLElement;
+          const item = currentItem as HTMLElement;
+          list.scrollTop = item.offsetTop - list.clientHeight / 2 + item.clientHeight / 2;
+        });
+      }
+    }
   },
 
   toggleExtendedSections(): void {

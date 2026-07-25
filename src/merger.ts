@@ -236,21 +236,110 @@ export const JSMerger = {
 };
 
 declare const FFmpeg: any;
+declare function GM_xmlhttpRequest(details: {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  responseType?: string;
+  onload?: (res: any) => void;
+  onerror?: () => void;
+  ontimeout?: () => void;
+}): void;
+
+// 使用 @ffmpeg/core-st (single-threaded) 核心，编译时未启用 pthreads，
+// 无 SharedArrayBuffer / 跨源隔离依赖，可在 Bilibili 等未设置 COOP/COEP 的宿主页面运行。
+// 配合 @ffmpeg/ffmpeg@0.11.6 loader 的 mainName: 'main' 选项，
+// 让 loader 调 wasm 导出的 'main' 而不是默认的 'proxy_main'（proxy_main 只存在于多线程核心）。
+// 注意：宿主页面（如 Bilibili）的 CSP 会拦截 unpkg 的直接 script/wasm 加载，
+// 所以通过 GM_xmlhttpRequest 拉成 blob URL 再交给 createFFmpeg。
+const FFMPEG_CORE_JS = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js';
+const FFMPEG_CORE_WASM = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.wasm';
+
+function fetchAsBlobUrl(url: string, mime: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      reject(new Error('GM_xmlhttpRequest 不可用'));
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url,
+      responseType: 'blob',
+      onload(res) {
+        if (res.status >= 200 && res.status < 300) {
+          const blob = res.response instanceof Blob ? res.response : new Blob([res.response], { type: mime });
+          const typed = blob.type ? blob : new Blob([blob], { type: mime });
+          resolve(URL.createObjectURL(typed));
+        } else {
+          reject(new Error(`HTTP ${res.status} @ ${url}`));
+        }
+      },
+      onerror() { reject(new Error(`网络错误 @ ${url}`)); },
+      ontimeout() { reject(new Error(`超时 @ ${url}`)); }
+    });
+  });
+}
+
+let corePathPromise: Promise<string> | null = null;
+function prepareCorePath(): Promise<string> {
+  if (corePathPromise) return corePathPromise;
+  corePathPromise = Promise.all([
+    fetchAsBlobUrl(FFMPEG_CORE_WASM, 'application/wasm')
+  ]).then(([wasmBlobUrl]) => {
+    // 用 blob URL 替换 core JS 里对 ffmpeg-core.wasm 的引用，然后把改写后的 JS 也做成 blob URL
+    return fetchAsBlobUrl(FFMPEG_CORE_JS, 'text/javascript').then(coreJsBlobUrl => {
+      // 直接返回 JS blob URL 即可；core JS 会用 fetch 拉 wasm，
+      // 但它内部通过相对路径 'ffmpeg-core.wasm' 计算 wasm URL，
+      // 相对于 blob URL 计算会失败，所以需要文本改写。
+      return fetch(coreJsBlobUrl).then(r => r.text()).then(coreJsText => {
+        URL.revokeObjectURL(coreJsBlobUrl);
+        const patched = coreJsText.replace(/ffmpeg-core\.wasm/g, wasmBlobUrl);
+        const patchedBlob = new Blob([patched], { type: 'text/javascript' });
+        return URL.createObjectURL(patchedBlob);
+      });
+    });
+  }).catch(err => {
+    corePathPromise = null;
+    throw err;
+  });
+  return corePathPromise;
+}
 
 export const FFmpegMerger = {
   name: 'FFmpeg合并',
   status: 'loading' as string,
+  unavailableReason: '' as string,
   ffmpeg: null as any,
+
+  isEnvSupported(): boolean {
+    return true;
+  },
+
+  getUnavailableReason(): string {
+    return this.unavailableReason;
+  },
 
   init(): Promise<boolean> {
     if (typeof FFmpeg === 'undefined') { this.status = 'unavailable'; return Promise.reject(new Error('FFmpeg未加载')); }
-    if (!this.ffmpeg) this.ffmpeg = FFmpeg.createFFmpeg({ log: false });
-    if (!this.ffmpeg.isLoaded()) {
-      this.status = 'loading';
-      return this.ffmpeg.load().then(() => { this.status = 'ready'; return true; }).catch((e: any) => { this.status = 'error'; throw e; });
+    if (this.ffmpeg && this.ffmpeg.isLoaded()) {
+      this.status = 'ready';
+      return Promise.resolve(true);
     }
-    this.status = 'ready';
-    return Promise.resolve(true);
+    this.status = 'loading';
+    return prepareCorePath().then(corePath => {
+      if (!this.ffmpeg) {
+        this.ffmpeg = FFmpeg.createFFmpeg({ log: false, corePath, mainName: 'main' });
+      }
+      if (this.ffmpeg.isLoaded()) {
+        this.status = 'ready';
+        return true;
+      }
+      return this.ffmpeg.load().then(() => { this.status = 'ready'; return true; });
+    }).catch((e: any) => {
+      this.status = 'error';
+      this.unavailableReason = e?.message || String(e);
+      throw e;
+    });
   },
 
   merge(videoBuffer: ArrayBuffer, audioBuffer: ArrayBuffer, metadata: { title?: string; author?: string }): Promise<ArrayBuffer> {

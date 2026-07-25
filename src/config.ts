@@ -3,7 +3,6 @@ import type { MergeMethod, ShortVideoPlatform } from './types.ts';
 export const LEARNING_DISCLAIMER = '本视频通过学习工具下载，仅供个人学习研究使用，请勿用于商业用途，请支持正版内容创作者。';
 
 export const CONFIG = {
-  SHORT_VIDEO_API_BASE: 'https://api.bugpk.com/api',
   SHORT_VIDEO_PLATFORMS: {
     douyin: {
       label: '抖音',
@@ -38,12 +37,6 @@ export const CONFIG = {
       mediaReferer: 'https://www.toutiao.com/',
       mediaOrigin: 'https://www.toutiao.com'
     },
-    pipixia: {
-      label: '皮皮虾',
-      endpoint: 'ppxia',
-      mediaReferer: 'https://h5.pipix.com/',
-      mediaOrigin: 'https://h5.pipix.com'
-    },
     pipigx: {
       label: '皮皮搞笑',
       endpoint: 'pipigx',
@@ -52,7 +45,7 @@ export const CONFIG = {
     }
   } as Record<ShortVideoPlatform, {
     label: string;
-    endpoint: string;
+    endpoint?: string;
     mediaReferer: string;
     mediaOrigin: string;
     fallbackEndpoints?: string[];
