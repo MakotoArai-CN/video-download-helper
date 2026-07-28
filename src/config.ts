@@ -42,6 +42,11 @@ export const CONFIG = {
       endpoint: 'pipigx',
       mediaReferer: 'https://h5.pipigx.com/',
       mediaOrigin: 'https://h5.pipigx.com'
+    },
+    x: {
+      label: 'X (Twitter)',
+      mediaReferer: 'https://x.com/',
+      mediaOrigin: 'https://x.com'
     }
   } as Record<ShortVideoPlatform, {
     label: string;
@@ -86,5 +91,11 @@ export const CONFIG = {
     JSMERGE: 'js-merge' as MergeMethod,
     FFMPEG: 'ffmpeg-merge' as MergeMethod,
     SEPARATE: 'separate' as MergeMethod
-  }
+  },
+  // 合并必须把音视频同时读进 JS 堆，峰值约为 (视频+音频)×2。
+  // 超过这个阈值就直接分开保存，否则标签页会 OOM 崩溃。
+  // 浏览器单个 ArrayBuffer 上限通常在 2GB 左右，留足余量。
+  MAX_MERGE_BYTES: 700 * 1024 * 1024,
+  // FFmpeg(wasm) 跑在 32 位地址空间里，可用内存比 JS 合并更紧张
+  MAX_FFMPEG_MERGE_BYTES: 350 * 1024 * 1024
 };

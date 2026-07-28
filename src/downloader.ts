@@ -415,6 +415,9 @@ export const Downloader = {
     ].join('::');
   },
 
+  // 队列里每个任务下载完成前都持有自己的 Blob，排太多会把内存吃光
+  maxQueueLength: 8,
+
   enqueueShortVideoTask(task: ShortVideoDownloadTask): void {
     const taskKey = this.getShortVideoTaskKey(task);
     const activeKey = this.activeShortVideoTask ? this.getShortVideoTaskKey(this.activeShortVideoTask) : '';
@@ -422,6 +425,11 @@ export const Downloader = {
 
     if (exists) {
       UI.showAlert('当前内容已在下载或等待队列中', 'warning');
+      return;
+    }
+
+    if (this.shortVideoQueue.length >= this.maxQueueLength) {
+      UI.showAlert(`等待队列已满（${this.maxQueueLength}），请等当前任务完成后再添加`, 'warning');
       return;
     }
 
@@ -558,7 +566,17 @@ export const Downloader = {
       filename += ' - ' + this.videoInfo!.owner.name;
       filename = Utils.sanitizeFilename(filename);
 
-      if (buffers.audioBuffer && MergeManager.currentMethod !== CONFIG.MERGE_METHODS.SEPARATE) {
+      const mergeBytes = buffers.videoBuffer.byteLength + (buffers.audioBuffer?.byteLength || 0);
+      const mergeLimit = MergeManager.currentMethod === CONFIG.MERGE_METHODS.FFMPEG
+        ? CONFIG.MAX_FFMPEG_MERGE_BYTES
+        : CONFIG.MAX_MERGE_BYTES;
+
+      if (buffers.audioBuffer && mergeBytes > mergeLimit) {
+        // 合并峰值内存约为文件总大小的两倍，超限直接分离保存以免标签页崩溃
+        Diagnostics.warn('merge', `文件过大（${Utils.formatBytes(mergeBytes)} > ${Utils.formatBytes(mergeLimit)}），跳过合并`);
+        UI.showAlert(`文件较大（${Utils.formatBytes(mergeBytes)}），为避免浏览器内存溢出已分别保存`, 'warning');
+        this.saveSeparate(buffers.videoBuffer, buffers.audioBuffer, filename);
+      } else if (buffers.audioBuffer && MergeManager.currentMethod !== CONFIG.MERGE_METHODS.SEPARATE) {
         UI.updateProgress('merge', 0, '合并中...');
         return MergeManager.merge(buffers.videoBuffer, buffers.audioBuffer, metadata).then(result => {
           if (result.separate) {
@@ -613,6 +631,20 @@ export const Downloader = {
     let lastError: Error | null = null;
     const getScopedPercent = (percent: number) => Math.min(100, Math.round(scope.base + percent * scope.span / 100));
 
+    // 需要页面上下文（继承 tab 网络栈）才能下载的域名
+    const needsPageContext = (url: string) => {
+      try { return /(?:^|\.)video\.twimg\.com$/i.test(new URL(url).hostname); } catch { return false; }
+    };
+
+    const progressCallback = (loaded: number, total: number) => {
+      if (!total) return;
+      const percent = Math.round(loaded / total * 100);
+      const scopedPercent = getScopedPercent(percent);
+      UI.updateProgress('video', percent, `${progressLabel} ${percent}%`);
+      UI.updateCircleProgress(scopedPercent);
+      this.updateShortVideoDownloadProgress(scopedPercent, `${progressLabel} ${percent}%`);
+    };
+
     const tryDirect = (index: number): Promise<Blob> => {
       if (index >= candidates.length) {
         return Promise.reject(lastError || new Error('所有下载地址均不可用'));
@@ -621,14 +653,16 @@ export const Downloader = {
       const currentUrl = candidates[index];
       UI.updateProgress('video', 0, candidates.length > 1 ? `${progressLabel} (${index + 1}/${candidates.length})` : progressLabel);
 
-      return Network.downloadBlob(currentUrl, (loaded, total) => {
-        if (!total) return;
-        const percent = Math.round(loaded / total * 100);
-        const scopedPercent = getScopedPercent(percent);
-        UI.updateProgress('video', percent, `${progressLabel} ${percent}%`);
-        UI.updateCircleProgress(scopedPercent);
-        this.updateShortVideoDownloadProgress(scopedPercent, `${progressLabel} ${percent}%`);
-      }, headers).catch(error => {
+      const primary = needsPageContext(currentUrl)
+        ? Network.downloadBlobInPageContext(currentUrl, progressCallback).catch(err => {
+            // 页面上下文失败时回退到 GM_xmlhttpRequest
+            return Network.downloadBlob(currentUrl, progressCallback, headers).catch(gmErr => {
+              throw gmErr instanceof Error ? gmErr : err;
+            });
+          })
+        : Network.downloadBlob(currentUrl, progressCallback, headers);
+
+      return primary.catch(error => {
         lastError = error;
         return tryDirect(index + 1);
       });
@@ -894,9 +928,14 @@ export const Downloader = {
     anchor.style.display = 'none';
     document.body.appendChild(anchor);
     anchor.click();
+
+    // object URL 会一直钉住整个 Blob 不让 GC 回收，必须 revoke。
+    // 但 revoke 太早浏览器还没来得及把数据落盘，下载会中断 ——
+    // 大文件需要更长的宽限期，按体积放宽到最多 30s。
+    const graceMs = Math.min(30_000, Math.max(2_000, Math.round(blob.size / (8 * 1024 * 1024)) * 1000));
     setTimeout(() => {
-      document.body.removeChild(anchor);
+      if (anchor.parentNode) document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
-    }, 1000);
+    }, graceMs);
   }
 };

@@ -2,6 +2,7 @@ import { CONFIG } from './config.ts';
 import { DouyinInterceptor } from './douyin-interceptor.ts';
 import type { DouyinAwemeDetail } from './douyin-interceptor.ts';
 import type { ShortVideoApiResponse, ShortVideoAuthor, ShortVideoData, ShortVideoPlatform } from './types.ts';
+import { XAPI } from './x-api.ts';
 
 type RawShortVideoData = Record<string, any>;
 
@@ -1376,6 +1377,16 @@ export const ShortVideoAPI = {
       const local = await parsePipigxLocal(url);
       if (local) return combineShortVideoItems([local], platform, url);
       throw new Error('解析失败，无法获取皮皮搞笑视频');
+    }
+
+    // X (Twitter)
+    if (platform === 'x') {
+      const data = await XAPI.parseUrl(url);
+      if (data) {
+        const list = data.items?.length ? data.items : [data];
+        return combineShortVideoItems(list, platform, url);
+      }
+      throw new Error('解析失败，无法获取 X 视频');
     }
 
     throw new Error('不支持的平台');

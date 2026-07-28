@@ -10,8 +10,9 @@ import { Diagnostics } from './diagnostics.ts';
 // 最早期启用诊断日志，覆盖到脚本入口的所有阶段
 Diagnostics.init();
 
-// 在页面最早期安装抖音拦截器（document-start）
-if (Utils.getSiteContext().kind === 'short-video' && Utils.getSiteContext().platform === 'douyin') {
+// 在页面最早期安装拦截器（document-start）
+const _earlyCtx = Utils.getSiteContext();
+if (_earlyCtx.kind === 'short-video' && _earlyCtx.platform === 'douyin') {
   DouyinInterceptor.install();
 }
 

@@ -1,8 +1,11 @@
+import { setHTML } from './ui.ts';
+
 export const CompleteEffect = {
   show(root: ShadowRoot | null, progressCircle?: HTMLElement | null): void {
     const overlay = document.createElement('div');
     overlay.className = 'bdl-complete-overlay';
-    overlay.innerHTML = '<div class="bdl-complete-container">' +
+    // 经 setHTML 赋值，兼容启用 Trusted Types 的站点
+    setHTML(overlay, '<div class="bdl-complete-container">' +
       '<div class="bdl-complete-ripple"></div>' +
       '<div class="bdl-complete-ripple"></div>' +
       '<div class="bdl-complete-ripple"></div>' +
@@ -10,7 +13,7 @@ export const CompleteEffect = {
       '<div class="bdl-complete-sparkles"></div>' +
       '<div class="bdl-complete-icon"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></div>' +
       '</div>' +
-      '<div class="bdl-complete-text">✨ 下载完成 ✨</div>';
+      '<div class="bdl-complete-text">✨ 下载完成 ✨</div>');
     (root || document.body).appendChild(overlay);
     this.createParticles(overlay.querySelector('.bdl-complete-particles')!);
     this.createSparkles(overlay.querySelector('.bdl-complete-sparkles')!);

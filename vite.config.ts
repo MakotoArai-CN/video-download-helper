@@ -30,12 +30,16 @@ const matchRules = [
   '*://*.ippzone.com/*',
   '*://pipigx.com/*',
   '*://*.pipigx.com/*',
+  '*://x.com/*',
+  '*://*.x.com/*',
+  '*://twitter.com/*',
+  '*://*.twitter.com/*',
 ];
 
 const matchLines = matchRules.map(m => `// @match        ${m}`).join('\n');
 
 const commonMeta = `// @namespace    https://github.com/MakotoArai-CN/video-download-helper
-// @version      0.2.3
+// @version      0.2.4
 // @description  支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、皮皮搞笑等站点的内容解析下载，新增智能诊断日志反馈功能，脚本仅供学习研究使用。
 // @author       Makoto
 ${matchLines}
@@ -50,6 +54,10 @@ ${matchLines}
 // @connect      bilivideo.cn
 // @connect      bilivideo.net
 // @connect      akamaized.net
+// @connect      x.com
+// @connect      twitter.com
+// @connect      twimg.com
+// @connect      video.twimg.com
 // @connect      *
 // @run-at       document-start
 // @license      MIT`;

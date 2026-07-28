@@ -5,11 +5,12 @@ declare function GM_xmlhttpRequest(details: {
   url: string;
   headers?: Record<string, string>;
   responseType?: string;
-  onload?: (res: any) => void;
+  onload?: (res: { status: number; response: any; responseHeaders?: string }) => void;
   onerror?: () => void;
   ontimeout?: () => void;
   onprogress?: (e: any) => void;
 }): void;
+declare const unsafeWindow: any;
 
 function shortUrl(url: string): string {
   if (!url) return url;
@@ -96,13 +97,15 @@ export const Network = {
 
   downloadBlob(url: string, onProgress?: (loaded: number, total: number) => void, headers?: Record<string, string>): Promise<Blob> {
     return new Promise((resolve, reject) => {
+      const isBiliDefault = !headers || (!headers.Referer && !headers['Referer']);
+      const defaults: Record<string, string> = isBiliDefault
+        ? { 'Referer': 'https://www.bilibili.com', 'Origin': 'https://www.bilibili.com', 'User-Agent': navigator.userAgent }
+        : { 'User-Agent': navigator.userAgent };
       GM_xmlhttpRequest({
         method: 'GET',
         url,
         headers: {
-          'Referer': 'https://www.bilibili.com',
-          'Origin': 'https://www.bilibili.com',
-          'User-Agent': navigator.userAgent,
+          ...defaults,
           ...headers
         },
         responseType: 'blob',
@@ -116,6 +119,37 @@ export const Network = {
         onerror() { reject(new Error('下载网络错误')); },
         ontimeout() { reject(new Error('下载超时')); }
       });
+    });
+  },
+
+  // 在页面上下文里 fetch，让请求继承 tab 的网络栈（Referer / 客户端指纹）。
+  // 用于 video.twimg.com 这类需要页面指纹才能通过校验的 CDN。
+  // 注意：这些 CDN 的响应不带 Access-Control-Allow-Credentials，
+  // 用 credentials:'include' 会被 CORS 直接拒掉，必须用 'omit'。
+  downloadBlobInPageContext(url: string, onProgress?: (loaded: number, total: number) => void): Promise<Blob> {
+    const win: any = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const pageFetch: typeof fetch = win.fetch.bind(win);
+
+    return pageFetch(url, { credentials: 'omit', mode: 'cors' }).then(async response => {
+      if (!response.ok) throw new Error('下载失败: ' + response.status);
+      const total = parseInt(response.headers.get('Content-Length') || '0', 10);
+      if (!response.body || !total) {
+        return response.blob();
+      }
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          received += value.length;
+          if (onProgress) onProgress(received, total);
+        }
+      }
+      return new Blob(chunks as BlobPart[]);
     });
   },
 

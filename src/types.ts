@@ -92,7 +92,8 @@ export type ShortVideoPlatform =
   | 'xiaohongshu'
   | 'weibo'
   | 'toutiao'
-  | 'pipigx';
+  | 'pipigx'
+  | 'x';
 
 export type SiteContext =
   | { kind: 'bilibili'; platform: 'bilibili'; sourceType: 'video' | 'bangumi' }

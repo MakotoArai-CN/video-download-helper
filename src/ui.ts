@@ -2,6 +2,7 @@ import { STYLES } from './styles.ts';
 import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
 import { Diagnostics, type DiagnosticEntry } from './diagnostics.ts';
+import { applySkin, sampleNativeStyle, SITE_SKINS, NEUTRAL_SKIN, type SkinVars } from './native-skin.ts';
 import type {
   VideoInfo,
   PageInfo,
@@ -13,11 +14,15 @@ import type {
   ShortVideoPlatform
 } from './types.ts';
 
-type ToolbarMode = 'video' | 'bangumi' | 'floating';
+type ToolbarMode = 'video' | 'bangumi' | 'floating' | 'native-bar';
 type MountTarget = {
   container: HTMLElement;
   anchor: HTMLElement | null;
   mode: ToolbarMode;
+  // native-bar 模式下：直接把按钮插进站点 DOM，并抄这个原生按钮的样式
+  inline?: boolean;
+  sample?: HTMLElement | null;
+  direction?: 'row' | 'column';
 };
 
 type ActionButton = {
@@ -63,12 +68,50 @@ const PLATFORM_LABELS: Record<ShortVideoPlatform, string> = {
   xiaohongshu: '小红书',
   weibo: '微博',
   toutiao: '今日头条',
-  pipigx: '皮皮搞笑'
+  pipigx: '皮皮搞笑',
+  x: 'X (Twitter)'
 };
 
 function clamp(value: number, min: number, max: number): number {
   if (max < min) return min;
   return Math.max(min, Math.min(value, max));
+}
+
+// 部分站点启用了 Trusted Types，直接给 innerHTML 赋字符串会抛
+// 「This document requires 'TrustedHTML' assignment」，导致整个面板渲染不出来。
+// 建一个放行策略，把脚本内部的静态 HTML 包一层。
+// 这些 HTML 全部来自脚本自身的模板常量，不含任何外部输入。
+let htmlPolicy: { createHTML(s: string): any } | null = null;
+let policyReady = false;
+
+function getHtmlPolicy() {
+  if (policyReady) return htmlPolicy;
+  policyReady = true;
+  try {
+    const tt = (window as any).trustedTypes;
+    if (tt?.createPolicy) {
+      htmlPolicy = tt.createPolicy('vdh-ui', { createHTML: (s: string) => s });
+    }
+  } catch {
+    // 站点用 require-trusted-types-for 且禁止创建新策略时会失败，只能降级
+    htmlPolicy = null;
+  }
+  return htmlPolicy;
+}
+
+// 统一的 innerHTML 赋值入口：有 Trusted Types 就走策略，没有就直接赋值
+export function setHTML(el: Element, html: string): void {
+  const policy = getHtmlPolicy();
+  try {
+    (el as any).innerHTML = policy ? policy.createHTML(html) : html;
+  } catch {
+    // 兜底：策略不可用时用 DOMParser 解析后搬运节点，绕过 innerHTML 限制
+    try {
+      el.textContent = '';
+      const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
+      while (doc.body.firstChild) el.appendChild(doc.body.firstChild);
+    } catch {}
+  }
 }
 
 function makeToolbarButton(): string {
@@ -288,15 +331,15 @@ export const UI = {
 
     const entry = document.createElement('div');
     entry.id = 'bdl-entry';
-    entry.innerHTML = makeToolbarButton();
+    setHTML(entry, makeToolbarButton());
 
     const panel = document.createElement('div');
     panel.id = 'bdl-panel';
-    panel.innerHTML = makePopup();
+    setHTML(panel, makePopup());
 
     const diagHost = document.createElement('div');
     diagHost.id = 'bdl-diag-host';
-    diagHost.innerHTML = makeDiagModal();
+    setHTML(diagHost, makeDiagModal());
 
     root.appendChild(entry);
     root.appendChild(panel);
@@ -305,6 +348,18 @@ export const UI = {
 
     this.host = host;
     this.root = root;
+
+    // 第二个 shadow host：体积很小、可作为普通行内元素插进站点操作栏。
+    // 主 host 是铺满视口的 fixed 覆盖层（承载弹窗），没法塞进别人的工具栏里。
+    const inlineHost = document.createElement('div');
+    inlineHost.id = 'bdl-inline-host';
+    inlineHost.style.cssText = 'display:inline-flex!important;align-items:center!important;pointer-events:auto!important;';
+    const inlineRoot = inlineHost.attachShadow({ mode: 'open' });
+    const inlineStyle = document.createElement('style');
+    inlineStyle.textContent = STYLES;
+    inlineRoot.appendChild(inlineStyle);
+    this.inlineHost = inlineHost;
+    this.inlineRoot = inlineRoot;
 
     const g = (id: string) => root.getElementById(id);
 
@@ -639,23 +694,92 @@ export const UI = {
     const siteContext = Utils.getSiteContext();
 
     if (siteContext.kind === 'short-video') {
+      // 短视频站点一律使用浮动按钮。
+      //
+      // 曾尝试用结构特征自动探测「原生操作栏」并内联，但实测反复误判：
+      // 微博首页把按钮插进了热搜导航栏、又插进了用户昵称区。原因是信息流页面
+      // 同时存在几十条内容、各有各的操作栏，「当前内容」这个前提本身就不成立；
+      // 而抖音/快手/小红书/X 在无痕环境是验证码页或登录墙，我无法实测验证任何选择器，
+      // 写死 class 名等于猜（它们的 class 还是构建期哈希，每次发版都变）。
+      //
+      // 插错位置比不插更糟 —— 按钮突兀地嵌在无关区域里，用户会以为脚本坏了。
+      // 因此这里只做一件有把握的事：浮动按钮，但样式改得克制、不喧宾夺主。
       return { container: document.body, anchor: null, mode: 'floating' };
     }
 
+    // B 站视频页：直接并入工具栏，跟点赞/投币/收藏/分享同级。
+    // 实测该工具栏是 flex 容器，子项为 .toolbar-left-item-wrap（margin-right: 8px），
+    // 追加一个同结构的元素不会破坏 Vue 的既有节点。
     const videoContainer = document.querySelector<HTMLElement>('#arc_toolbar_report .video-toolbar-left-main');
     if (videoContainer) {
       const shareWrap = videoContainer.querySelector('.video-share-wrap')?.closest('.toolbar-left-item-wrap') as HTMLElement | null;
-      return { container: videoContainer, anchor: shareWrap, mode: 'video' };
+      return {
+        container: videoContainer,
+        anchor: shareWrap,
+        mode: 'video',
+        inline: true,
+        sample: (videoContainer.querySelector('.video-toolbar-left-item') as HTMLElement | null) || shareWrap,
+        direction: 'row'
+      };
     }
 
     const bangumiContainer = document.querySelector<HTMLElement>('.player-left-components .toolbar-left');
     if (bangumiContainer) {
       const watchTogether = document.getElementById('watch_together_tab');
       const anchor = watchTogether?.parentElement instanceof HTMLElement ? watchTogether.parentElement : null;
-      return { container: bangumiContainer, anchor, mode: 'bangumi' };
+      return {
+        container: bangumiContainer,
+        anchor,
+        mode: 'bangumi',
+        inline: true,
+        sample: (bangumiContainer.querySelector('[class*="toolbar-left-item"]') as HTMLElement | null) || anchor,
+        direction: 'row'
+      };
     }
 
     return null;
+  },
+
+  inlineHost: null as HTMLElement | null,
+  inlineRoot: null as ShadowRoot | null,
+
+  // 把承载按钮的小 host 插进站点操作栏，并把 entry 从主 host 迁过去。
+  // 迁移而不是复制：保证事件绑定、进度状态都跟着走，只有一个按钮实例。
+  attachHostInline(mount: MountTarget): void {
+    const entry = this.elements.entry as HTMLElement | undefined;
+    if (!entry || !this.inlineHost || !this.inlineRoot) return;
+
+    if (entry.parentNode !== this.inlineRoot) this.inlineRoot.appendChild(entry);
+
+    const container = mount.container;
+    // 已经在正确位置就不动，避免每次 DOM 变动都重插（会打断 CSS 过渡、也浪费性能）
+    if (this.inlineHost.parentElement === container) return;
+    container.appendChild(this.inlineHost);
+  },
+
+  // entry 迁回主 host（从 native-bar 切回 floating / bilibili 时）
+  detachHostInline(): void {
+    const entry = this.elements.entry as HTMLElement | undefined;
+    if (!entry || !this.root) return;
+    if (entry.parentNode !== this.root) {
+      // 插在 panel 之前，保持原本的 DOM 顺序
+      const panel = this.elements.panel as HTMLElement | undefined;
+      if (panel && panel.parentNode === this.root) this.root.insertBefore(entry, panel);
+      else this.root.appendChild(entry);
+    }
+    this.inlineHost?.remove();
+  },
+
+  // 站点基础皮肤：实测过的用实测值，没实测过的用中性兜底
+  getBaseSkin(): SkinVars {
+    const ctx = Utils.getSiteContext();
+    if (ctx.kind === 'bilibili') {
+      return SITE_SKINS[ctx.sourceType === 'bangumi' ? 'bangumi' : 'bilibili'] || NEUTRAL_SKIN;
+    }
+    if (ctx.kind === 'short-video') {
+      return SITE_SKINS[ctx.platform] || NEUTRAL_SKIN;
+    }
+    return NEUTRAL_SKIN;
   },
 
   ensureMounted(): boolean {
@@ -665,6 +789,7 @@ export const UI = {
 
     const mount = this.getMountTarget();
     if (!mount) {
+      this.detachHostInline();
       entry.className = '';
       entry.removeAttribute('data-mode');
       entry.removeAttribute('data-mounted');
@@ -681,6 +806,33 @@ export const UI = {
 
     entry.dataset.mode = mount.mode;
     entry.dataset.mounted = 'true';
+    if (mount.inline) {
+      // 直接把 shadow host 插进站点工具栏，跟原生按钮同级并排。
+      // 用 shadow DOM 隔离，站点样式进不来、我们的样式也污染不到站点。
+      // 真正进入 DOM 流之后，滚动/布局变化由浏览器负责，不再需要 JS 跟随定位。
+      entry.dataset.mode = 'native-bar';
+      entry.className = 'bdl-native-entry';
+      btn.className = 'bdl-toolbar-btn bdl-native-btn';
+      entry.style.left = '';
+      entry.style.top = '';
+      entry.style.right = '';
+      entry.style.bottom = '';
+      entry.style.visibility = '';
+      this.attachHostInline(mount);
+      // 抄一份相邻原生按钮的样式，做到「看起来就是站点自带的」。
+      // 变量要写在 inlineHost 上——按钮渲染在它的 shadow 里，写主 host 无效。
+      applySkin(this.inlineHost, sampleNativeStyle(mount.sample || null, this.getBaseSkin()));
+      this.mountedAt = mount.container;
+      this.currentMountMode = mount.mode;
+      entry.classList.toggle('is-downloading', this.entryProgressActive);
+      if (!this.isPopupVisible()) this.positionPopup();
+      this.syncEntryProgressVisibility();
+      return true;
+    }
+
+    // 非 inline 模式：确保 entry 回到主 host，并清掉站点里插入的小 host
+    this.detachHostInline();
+
     if (mount.mode === 'floating') {
       entry.className = 'bdl-floating-entry';
       btn.className = 'bdl-toolbar-btn bdl-floating-btn';
@@ -934,14 +1086,14 @@ export const UI = {
 
     this.elements.title.textContent = title;
     this.elements.title.title = title;
-    this.elements.author.innerHTML = `<span class="bdl-meta-label">UP</span><span>${videoInfo.owner.name}</span>`;
-    this.elements.duration.innerHTML = `<span class="bdl-meta-label">时长</span><span>${Utils.formatDuration(videoInfo.duration)}</span>`;
+    setHTML(this.elements.author, `<span class="bdl-meta-label">UP</span><span>${videoInfo.owner.name}</span>`);
+    setHTML(this.elements.duration, `<span class="bdl-meta-label">时长</span><span>${Utils.formatDuration(videoInfo.duration)}</span>`);
 
     let badge = '';
     if (vipType === 0) badge = '<span class="bdl-vip-badge guest">游客</span>';
     else if (vipType === 1) badge = '<span class="bdl-vip-badge normal">会员</span>';
     else if (vipType === 2) badge = '<span class="bdl-vip-badge vip">大会员</span>';
-    this.elements.vip.innerHTML = badge;
+    setHTML(this.elements.vip, badge);
   },
 
   updateShortVideoInfo(data: ShortVideoData, platform: ShortVideoPlatform): void {
@@ -960,9 +1112,9 @@ export const UI = {
 
     this.elements.title.textContent = title;
     this.elements.title.title = title;
-    this.elements.author.innerHTML = `<span class="bdl-meta-label">作者</span><span>${authorName}</span>`;
-    this.elements.duration.innerHTML = `<span class="bdl-meta-label">类型</span><span>${durationText ? `${typeLabel} · ${durationText}` : typeLabel}</span>`;
-    this.elements.vip.innerHTML = `<span class="bdl-vip-badge site">${PLATFORM_LABELS[platform]}</span>`;
+    setHTML(this.elements.author, `<span class="bdl-meta-label">作者</span><span>${authorName}</span>`);
+    setHTML(this.elements.duration, `<span class="bdl-meta-label">类型</span><span>${durationText ? `${typeLabel} · ${durationText}` : typeLabel}</span>`);
+    setHTML(this.elements.vip, `<span class="bdl-vip-badge site">${PLATFORM_LABELS[platform]}</span>`);
     this.setPrimaryButtonLabel(this.getShortVideoPrimaryLabel(data));
   },
 
@@ -972,7 +1124,7 @@ export const UI = {
     const count = this.elements.shortItemsCount as HTMLElement | null;
     if (!section || !list) return;
 
-    list.innerHTML = '';
+    list.textContent = '';
     if (items.length <= 1) {
       section.classList.remove('show');
       return;
@@ -997,6 +1149,7 @@ export const UI = {
       const titleEl = document.createElement('span');
       titleEl.className = 'bdl-short-item-title';
       titleEl.textContent = title;
+      button.title = title;
       button.append(marker, titleEl);
       button.addEventListener('click', () => onSelect(index));
       list.appendChild(button);
@@ -1008,7 +1161,7 @@ export const UI = {
     const list = this.elements.shortItems as HTMLElement | null;
     const count = this.elements.shortItemsCount as HTMLElement | null;
     if (section) section.classList.remove('show');
-    if (list) list.innerHTML = '';
+    if (list) list.textContent = '';
     if (count) count.textContent = '';
   },
 
@@ -1024,7 +1177,7 @@ export const UI = {
     this.resetFooterSecret();
     this.elements.pagesSection.classList.remove('show');
     this.elements.pagesCount.textContent = `共 ${pages.length} 个分P`;
-    this.elements.pagesList.innerHTML = '';
+    this.elements.pagesList.textContent = '';
 
     pages.forEach((page, index) => {
       const item = document.createElement('div');
@@ -1077,7 +1230,7 @@ export const UI = {
     this.ugcSectionEnabled = true;
     this.resetFooterSecret();
     this.elements.ugcCount.textContent = `共 ${episodes.length} 个视频`;
-    this.elements.ugcList.innerHTML = '';
+    this.elements.ugcList.textContent = '';
 
     let currentItem: HTMLElement | null = null;
 
@@ -1202,14 +1355,14 @@ export const UI = {
   hidePagesSection(): void {
     this.pagesSectionEnabled = false;
     this.elements.pagesSection.classList.remove('show');
-    this.elements.pagesList.innerHTML = '';
+    this.elements.pagesList.textContent = '';
     this.elements.pagesCount.textContent = '';
   },
 
   hideUGCSection(): void {
     this.ugcSectionEnabled = false;
     this.elements.ugcSection.classList.remove('show');
-    this.elements.ugcList.innerHTML = '';
+    this.elements.ugcList.textContent = '';
     this.elements.ugcCount.textContent = '';
   },
 
@@ -1241,9 +1394,9 @@ export const UI = {
     this.setPrimaryProgressLabel(`${PLATFORM_LABELS[platform]}下载`);
     this.elements.title.textContent = `${PLATFORM_LABELS[platform]}内容待解析`;
     this.elements.title.title = this.elements.title.textContent;
-    this.elements.author.innerHTML = '<span class="bdl-meta-label">状态</span><span>打开具体内容页后可解析</span>';
-    this.elements.duration.innerHTML = '<span class="bdl-meta-label">类型</span><span>短视频/图集</span>';
-    this.elements.vip.innerHTML = `<span class="bdl-vip-badge site">${PLATFORM_LABELS[platform]}</span>`;
+    setHTML(this.elements.author, '<span class="bdl-meta-label">状态</span><span>打开具体内容页后可解析</span>');
+    setHTML(this.elements.duration, '<span class="bdl-meta-label">类型</span><span>短视频/图集</span>');
+    setHTML(this.elements.vip, `<span class="bdl-vip-badge site">${PLATFORM_LABELS[platform]}</span>`);
     this.setPrimaryButtonLabel('解析内容');
   },
 
@@ -1258,7 +1411,7 @@ export const UI = {
   },
 
   updateQualities(qualities: QualityItem[], currentQn: number, onSelect: (qn: number) => void): void {
-    this.elements.qualities.innerHTML = '';
+    this.elements.qualities.textContent = '';
 
     qualities.forEach((quality, index) => {
       const btn = document.createElement('button');
@@ -1290,7 +1443,7 @@ export const UI = {
   },
 
   updateCodecSelectors(videoCodecs: VideoCodecItem[], audioCodecs: AudioCodecItem[]): void {
-    this.elements.videoCodec.innerHTML = '';
+    this.elements.videoCodec.textContent = '';
     videoCodecs.forEach((codec, index) => {
       const option = document.createElement('option');
       option.value = codec.type;
@@ -1299,7 +1452,7 @@ export const UI = {
       this.elements.videoCodec.appendChild(option);
     });
 
-    this.elements.audioCodec.innerHTML = '';
+    this.elements.audioCodec.textContent = '';
     audioCodecs.forEach((codec, index) => {
       const option = document.createElement('option');
       option.value = String(codec.id);
@@ -1317,13 +1470,13 @@ export const UI = {
     onSubtitles: () => void,
     onDanmaku: () => void
   ): void {
-    this.elements.extraDownloads.innerHTML = '';
+    this.elements.extraDownloads.textContent = '';
 
     if (hasCover) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'bdl-extra-btn';
-      button.innerHTML = '<span class="bdl-extra-btn-mark">封面</span><span>下载封面</span>';
+      setHTML(button, '<span class="bdl-extra-btn-mark">封面</span><span>下载封面</span>');
       button.addEventListener('click', onCover);
       this.elements.extraDownloads.appendChild(button);
     }
@@ -1332,7 +1485,7 @@ export const UI = {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'bdl-extra-btn';
-      button.innerHTML = '<span class="bdl-extra-btn-mark">字幕</span><span>下载字幕</span>';
+      setHTML(button, '<span class="bdl-extra-btn-mark">字幕</span><span>下载字幕</span>');
       button.addEventListener('click', onSubtitles);
       this.elements.extraDownloads.appendChild(button);
     }
@@ -1341,19 +1494,19 @@ export const UI = {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'bdl-extra-btn';
-      button.innerHTML = '<span class="bdl-extra-btn-mark">弹幕</span><span>下载弹幕</span>';
+      setHTML(button, '<span class="bdl-extra-btn-mark">弹幕</span><span>下载弹幕</span>');
       button.addEventListener('click', onDanmaku);
       this.elements.extraDownloads.appendChild(button);
     }
   },
 
   setExtraActions(actions: ActionButton[]): void {
-    this.elements.extraDownloads.innerHTML = '';
+    this.elements.extraDownloads.textContent = '';
     actions.forEach(action => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'bdl-extra-btn';
-      button.innerHTML = `<span class="bdl-extra-btn-mark">${action.marker}</span><span>${action.label}</span>`;
+      setHTML(button, `<span class="bdl-extra-btn-mark">${action.marker}</span><span>${action.label}</span>`);
       button.addEventListener('click', action.onClick);
       this.elements.extraDownloads.appendChild(button);
     });

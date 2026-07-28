@@ -1269,20 +1269,37 @@ export const STYLES = `
             padding: 0 12px 0 8px;
         }
 
+        /* 浮动按钮：做成克制的深色半透明胶囊，默认低透明度，
+           hover 才完全显现。目的是「在场但不抢戏」——
+           短视频站点多为深色界面，粉色渐变按钮会非常突兀。 */
         #bdl-entry[data-mode="floating"] #bdl-main-btn {
             min-width: 88px;
             height: 40px;
             padding: 0 16px 0 12px;
-            background: linear-gradient(180deg, #fb7299 0%, #f46290 100%);
-            color: #fff;
-            box-shadow: 0 12px 24px rgba(251, 114, 153, 0.28);
+            background: rgba(22, 24, 28, 0.72);
+            -webkit-backdrop-filter: blur(12px) saturate(150%);
+            backdrop-filter: blur(12px) saturate(150%);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            color: rgba(255, 255, 255, 0.92);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+            opacity: 0.66;
+            transition: opacity 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
         }
 
         #bdl-entry[data-mode="floating"] #bdl-main-btn:hover {
-            background: linear-gradient(180deg, #fb7299 0%, #ec5f8d 100%);
+            background: rgba(22, 24, 28, 0.9);
             color: #fff;
-            border-color: transparent;
-            box-shadow: 0 14px 28px rgba(251, 114, 153, 0.34);
+            border-color: rgba(255, 255, 255, 0.22);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+            opacity: 1;
+        }
+
+        /* 下载进行中必须清晰可见，不再压低透明度 */
+        #bdl-entry[data-mode="floating"].is-downloading #bdl-main-btn,
+        #bdl-entry[data-mode="floating"] #bdl-main-btn[aria-expanded="true"] {
+            opacity: 1;
+            background: rgba(22, 24, 28, 0.9);
+            color: #fff;
         }
 
         #bdl-main-btn:hover {
@@ -1314,6 +1331,71 @@ export const STYLES = `
             fill: currentColor;
             z-index: 2;
             position: relative;
+        }
+
+        /* ── 无缝集成模式 ──────────────────────────────────────────
+           按钮已插进站点自己的操作栏，视觉完全由 --bdl-skin-* 变量驱动，
+           这些变量来自实测数值或运行时对相邻原生按钮的取样。
+           这里刻意不设任何品牌色/阴影/渐变，让它看起来就是站点自带的。 */
+        #bdl-entry[data-mode="native-bar"] {
+            display: inline-flex;
+            align-items: center;
+            position: static;
+        }
+
+        #bdl-entry[data-mode="native-bar"] #bdl-main-btn {
+            height: var(--bdl-skin-height, 28px);
+            padding: var(--bdl-skin-padding, 0);
+            border-radius: var(--bdl-skin-radius, 0);
+            gap: var(--bdl-skin-gap, 4px);
+            font-size: var(--bdl-skin-font-size, 13px);
+            font-weight: var(--bdl-skin-font-weight, 500);
+            color: var(--bdl-skin-color, inherit);
+            background: var(--bdl-skin-bg, transparent);
+            border: none;
+            box-shadow: none;
+            /* 继承站点字体，避免字形不一致露馅 */
+            font-family: inherit;
+            white-space: nowrap;
+        }
+
+        #bdl-entry[data-mode="native-bar"] #bdl-main-btn:hover {
+            color: var(--bdl-skin-color-hover, inherit);
+            background: var(--bdl-skin-bg-hover, transparent);
+            border-color: transparent;
+            box-shadow: none;
+            transform: none;
+        }
+
+        #bdl-entry[data-mode="native-bar"] #bdl-main-btn:active {
+            transform: none;
+        }
+
+        #bdl-entry[data-mode="native-bar"] #bdl-main-btn[aria-expanded="true"] {
+            color: var(--bdl-skin-color-hover, inherit);
+            background: var(--bdl-skin-bg-hover, transparent);
+            border-color: transparent;
+        }
+
+        #bdl-entry[data-mode="native-bar"] #bdl-main-btn svg {
+            width: var(--bdl-skin-icon-size, 20px);
+            height: var(--bdl-skin-icon-size, 20px);
+            fill: currentColor;
+        }
+
+        /* 下载进度：不铺满整个按钮，只在底部走一条细线，
+           跟站点原生按钮的克制风格一致 */
+        #bdl-entry[data-mode="native-bar"] #bdl-progress-circle {
+            inset: auto 0 0;
+            height: 2px;
+            border-radius: 0;
+            background: var(--bdl-skin-color-hover, #00aeec);
+            opacity: 0;
+            transition: opacity 0.2s ease, width 0.3s ease;
+        }
+
+        #bdl-entry[data-mode="native-bar"].has-entry-progress #bdl-progress-circle {
+            opacity: 1;
         }
 
         #bdl-main-btn:hover svg {

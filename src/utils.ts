@@ -42,6 +42,9 @@ export const Utils = {
     if (host.endsWith('ippzone.com') || host.endsWith('pipigx.com')) {
       return { kind: 'short-video', platform: 'pipigx' };
     }
+    if (host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com')) {
+      return { kind: 'short-video', platform: 'x' };
+    }
 
     return { kind: 'unsupported', platform: null };
   },
