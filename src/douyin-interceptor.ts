@@ -2,7 +2,12 @@ declare const unsafeWindow: any;
 
 export interface DouyinVideoQuality {
   quality_type: number;
-  quality_desc: string;
+  /** 接口返回的画质名，Web 端常缺省。 */
+  quality_desc?: string;
+  /** 档位名，形如 `normal_1080_0`、`adapt_lowest_720_1`。 */
+  gear_name?: string;
+  /** 1 表示 H.265 编码，接口有时以字符串下发。 */
+  is_h265?: number | string;
   bit_rate: number;
   play_addr: { url_list: string[] };
 }
@@ -40,18 +45,79 @@ function storeDetail(detail: DouyinAwemeDetail): void {
   cache.set(detail.aweme_id, detail);
 }
 
+/** 从已解析的响应体收集作品详情。 */
+function collectAwemeDetails(json: any): void {
+  const detail = json?.aweme_detail || json?.itemInfo?.itemStruct;
+  if (detail) { storeDetail(detail); return; }
+  const list = json?.aweme_list || json?.item_list;
+  if (Array.isArray(list)) list.forEach(storeDetail);
+}
+
 function tryParseAwemeResponse(text: string): void {
   try {
-    const json = JSON.parse(text);
-    const detail = json?.aweme_detail || json?.itemInfo?.itemStruct;
-    if (detail) { storeDetail(detail); return; }
-    const list: any[] = json?.aweme_list || json?.item_list || [];
-    list.forEach(storeDetail);
+    collectAwemeDetails(JSON.parse(text));
   } catch {}
+}
+
+/**
+ * 从 XHR 响应中收集作品详情。
+ *
+ * responseType 为 json/blob/arraybuffer 时读 responseText 会抛
+ * InvalidStateError，该异常发生在 load 回调里会冒泡到页面，故按类型分流；
+ * json 已是解析结果，直接取用。
+ */
+function collectAwemeFromXhr(xhr: XMLHttpRequest): void {
+  if (xhr.responseType === 'json') {
+    collectAwemeDetails(xhr.response);
+    return;
+  }
+  if (xhr.responseType === '' || xhr.responseType === 'text') {
+    tryParseAwemeResponse(xhr.responseText || '');
+  }
 }
 
 function isAwemeUrl(url: string): boolean {
   return /douyin\.com.*\/aweme\/v\d+\//i.test(url);
+}
+
+/** gear_name 中间段为纵向分辨率。 */
+const GEAR_HEIGHT = /_(\d{3,4})_/;
+
+/** 取画质的纵向分辨率，用于排序；取不到记 0，排在有分辨率的档位之后。 */
+function qualityHeight(item: DouyinVideoQuality): number {
+  const fromDesc = item.quality_desc?.match(/(\d{3,4})\s*P/i)?.[1];
+  return Number(fromDesc || item.gear_name?.match(GEAR_HEIGHT)?.[1] || 0);
+}
+
+/**
+ * 取画质名。
+ *
+ * quality_desc 在 Web 端接口常缺省，退到 gear_name 里的分辨率；两者都没有时
+ * 用码率命名，保证不同档位仍有可区分的标识。
+ */
+function qualityLabel(item: DouyinVideoQuality): string {
+  const desc = item.quality_desc?.trim();
+  if (desc) return desc;
+
+  const height = item.gear_name?.match(GEAR_HEIGHT)?.[1];
+  return height ? `${height}P` : `${Math.round(item.bit_rate / 1000)}kbps`;
+}
+
+/**
+ * 从 url_list 取第一条 http 地址。
+ *
+ * 抖音的 url_list 会混入 null 与非字符串元素，直接对元素调 startsWith 会抛
+ * TypeError 并中断整个解析，故先判类型。
+ *
+ * @param list 接口下发的地址数组，允许为空
+ * @returns 第一条 http 地址，没有则返回空串
+ */
+export function pickHttpUrl(list?: unknown[]): string {
+  if (!Array.isArray(list)) return '';
+  for (const item of list) {
+    if (typeof item === 'string' && item.startsWith('http')) return item;
+  }
+  return '';
 }
 
 export const DouyinInterceptor = {
@@ -88,7 +154,7 @@ export const DouyinInterceptor = {
     win.XMLHttpRequest.prototype.send = function(...args: any[]) {
       if (isAwemeUrl(this._bdl_url || '')) {
         this.addEventListener('load', function(this: XMLHttpRequest) {
-          tryParseAwemeResponse(this.responseText || '');
+          collectAwemeFromXhr(this);
         });
       }
       return origXhrSend.apply(this, args);
@@ -150,31 +216,41 @@ export const DouyinInterceptor = {
     return all[all.length - 1] || null;
   },
 
-  // 从 detail 提取所有画质，按码率从高到低排序
+  /**
+   * 提取可下载画质，按分辨率与码率从高到低排序，每个画质档位只保留一条。
+   *
+   * bit_rate 会把同一档位拆成多份下发：H.264 与 H.265 各一条，同编码下再按
+   * 设备分层给出多个码率，一个作品常有二十余条，直接展开会得到一串无法区分的
+   * 同名条目。故按画质名归并，优先保留兼容性更好的 H.264，同编码下取码率最高的。
+   */
   extractQualities(detail: DouyinAwemeDetail): Array<{ label: string; url: string }> {
-    const results: Array<{ label: string; url: string; bitrate: number }> = [];
     const video = detail.video;
     if (!video) return [];
 
-    const bitRates = video.bit_rate || [];
-    bitRates.forEach(item => {
-      const url = item.play_addr?.url_list?.find(u => u.startsWith('http'));
-      if (url) {
-        results.push({
-          label: item.quality_desc || `${Math.round(item.bit_rate / 1000)}kbps`,
-          url,
-          bitrate: item.bit_rate
-        });
-      }
-    });
+    const picked = new Map<string, { label: string; url: string; bitrate: number; height: number; h265: boolean }>();
+
+    for (const item of video.bit_rate || []) {
+      const url = pickHttpUrl(item?.play_addr?.url_list);
+      if (!url) continue;
+
+      const label = qualityLabel(item);
+      const h265 = String(item.is_h265) === '1';
+      const prev = picked.get(label);
+      if (prev && (prev.h265 === h265 ? prev.bitrate >= item.bit_rate : !prev.h265)) continue;
+
+      picked.set(label, { label, url, bitrate: item.bit_rate, height: qualityHeight(item), h265 });
+    }
+
+    const results = Array.from(picked.values());
 
     // 如果没有 bit_rate，用 play_addr
     if (results.length === 0) {
-      const url = video.play_addr?.url_list?.find(u => u.startsWith('http'));
-      if (url) results.push({ label: '原画', url, bitrate: 0 });
+      const url = pickHttpUrl(video.play_addr?.url_list);
+      if (url) results.push({ label: '原画', url, bitrate: 0, height: 0, h265: false });
     }
 
-    return results.sort((a, b) => b.bitrate - a.bitrate);
+    results.sort((a, b) => (b.height - a.height) || (b.bitrate - a.bitrate));
+    return results.map(item => ({ label: item.label, url: item.url }));
   },
 
   // 直接调用抖音官方 API（方案4，利用浏览器同源 cookie）

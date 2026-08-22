@@ -3,17 +3,21 @@ import { ThreadManager } from './thread-manager.ts';
 import { UI } from './ui.ts';
 import { Downloader } from './downloader.ts';
 import { MergeManager } from './merge-manager.ts';
-import { FFmpegMerger } from './merger.ts';
+import { FFmpegMerger, getFFmpegGlobal, loadFFmpegLoader } from './merger.ts';
 import { DouyinInterceptor } from './douyin-interceptor.ts';
+import { KuaishouInterceptor } from './kuaishou-interceptor.ts';
 import { Diagnostics } from './diagnostics.ts';
+import { PLATFORMS } from './platforms.ts';
+import type { GifOutput, WatchConfig } from './types.ts';
 
 // 最早期启用诊断日志，覆盖到脚本入口的所有阶段
 Diagnostics.init();
 
 // 在页面最早期安装拦截器（document-start）
 const _earlyCtx = Utils.getSiteContext();
-if (_earlyCtx.kind === 'short-video' && _earlyCtx.platform === 'douyin') {
-  DouyinInterceptor.install();
+if (_earlyCtx.kind === 'short-video') {
+  if (_earlyCtx.platform === 'douyin') DouyinInterceptor.install();
+  if (_earlyCtx.platform === 'kuaishou') KuaishouInterceptor.install();
 }
 
 declare const FFmpeg: any;
@@ -30,16 +34,6 @@ declare const GM_info: {
 
 let initialized = false;
 let initTimer: number | null = null;
-let ffmpegLoadPromise: Promise<void> | null = null;
-
-function getFFmpegGlobal(): any {
-  if (typeof FFmpeg !== 'undefined') return FFmpeg;
-  if (typeof unsafeWindow !== 'undefined' && unsafeWindow.FFmpeg) {
-    (globalThis as any).FFmpeg = unsafeWindow.FFmpeg;
-    return unsafeWindow.FFmpeg;
-  }
-  return null;
-}
 
 function bindUIEvents(): void {
   const el = UI.elements;
@@ -84,11 +78,17 @@ function bindUIEvents(): void {
       return;
     }
 
-    UI.queryAll<HTMLElement>('.bdl-method-item').forEach(i => i.classList.remove('active'));
+    UI.queryAll<HTMLElement>('#bdl-methods .bdl-method-item').forEach(i => i.classList.remove('active'));
     item.classList.add('active');
     MergeManager.setMethod(method);
     UI.hideTips();
     (el.mergeRow as HTMLElement).style.display = method === 'separate' ? 'none' : 'block';
+  });
+
+  (el.gifFormats as HTMLElement).addEventListener('click', e => {
+    const item = (e.target as HTMLElement).closest('.bdl-method-item') as HTMLElement | null;
+    if (!item || !item.dataset.gif) return;
+    Downloader.setGifMethod(item.dataset.gif as GifOutput);
   });
 
   (el.download as HTMLElement).addEventListener('click', () => Downloader.start());
@@ -145,124 +145,85 @@ function bindUIEvents(): void {
     if (!UI.isPopupVisible()) UI.positionPopup();
   }, true);
 
+  const ctx = Utils.getSiteContext();
+  installWatchers(syncMount, ctx.kind === 'short-video' ? PLATFORMS[ctx.platform].watch : undefined);
+}
+
+/**
+ * 安装切换视频的监听。
+ *
+ * URL 变化是所有站点通用的信号，无条件监听。沉浸式信息流（抖音推荐页、
+ * 微博视频流）切换视频时 URL 不变，需按平台的 watch 配置补充播放器侧的信号。
+ *
+ * @param syncMount DOM 变动后重新挂载入口按钮的回调
+ * @param watch 当前平台的监听配置，缺省时只依赖 URL 变化
+ */
+function installWatchers(syncMount: () => void, watch?: WatchConfig): void {
+  const urlChangeDelay = watch?.urlChangeDelayMs ?? 1500;
   let lastUrl = location.href;
   new MutationObserver(() => {
     syncMount();
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      UI.hidePopup();
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    UI.hidePopup();
+    UI.ensureMounted();
+    setTimeout(() => {
       UI.ensureMounted();
-      const isDouyin = Utils.getSiteContext().platform === 'douyin';
-      setTimeout(() => {
-        UI.ensureMounted();
-        Downloader.refreshInfo({ silent: true });
-      }, isDouyin ? 0 : 1500);
-    }
+      Downloader.refreshInfo({ silent: true });
+    }, urlChangeDelay);
   }).observe(document.body, { childList: true, subtree: true });
 
-  // 抖音推荐页：URL 不变但视频会切换
-  if (Utils.getSiteContext().platform === 'douyin') {
-    let refreshTimer: number | null = null;
+  if (!watch) return;
 
-    const onVideoChange = () => {
-      if (refreshTimer !== null) clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null;
-        Downloader.refreshInfo({ silent: true });
-      }, 300);
-    };
+  const debounceMs = watch.debounceMs ?? 300;
+  let refreshTimer: number | null = null;
+  const onVideoChange = () => {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(() => {
+      refreshTimer = null;
+      // 滑动结束后重挂一次：matchVisible 的挂载点在切换动画期间会短暂命中
+      // 上一个视频的操作栏，DOM 变动此时可能已停止，需在此补一次校正。
+      UI.ensureMounted();
+      Downloader.refreshInfo({ silent: true });
+    }, debounceMs);
+  };
 
-    // 主触发器：监听 sliderVideo 容器 class 中的 video_XXXX 变化
-    // xgplayer 切换视频时会更新 class，比 play/playing 事件更可靠且不会重复触发
-    const observedSliders = new WeakSet<Element>();
-
-    const observeSlider = (el: Element) => {
-      if (observedSliders.has(el)) return;
-      observedSliders.add(el);
-      let lastId = (el.className.match(/\bvideo_(\d{15,20})\b/) || [])[1] || '';
-      new MutationObserver(() => {
-        const newId = (el.className.match(/\bvideo_(\d{15,20})\b/) || [])[1] || '';
-        if (newId && newId !== lastId) {
-          lastId = newId;
-          onVideoChange();
-        }
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    };
-
-    const scanSliders = () => {
-      document.querySelectorAll<HTMLElement>('[class*="sliderVideo"]').forEach(observeSlider);
-    };
-
-    // 兜底：play 事件（sliderVideo 不存在时的非推荐页场景）
-    // 注意：xgplayer MSE 模式不触发 playing，但 play 会触发
-    const bindVideoPlay = (video: HTMLVideoElement) => {
-      if ((video as any).__bdl_play_bound) return;
-      (video as any).__bdl_play_bound = true;
-      video.addEventListener('play', onVideoChange);
-    };
-
-    scanSliders();
-    document.querySelectorAll<HTMLVideoElement>('video').forEach(bindVideoPlay);
-
+  // class 中的视频 id 变化是首选信号：xgplayer 的 MSE 模式不触发 playing，
+  // 而 play 事件在同一视频重复播放时会误报
+  const observedContainers = new WeakSet<Element>();
+  const observeClassId = (el: Element, pattern: RegExp) => {
+    if (observedContainers.has(el)) return;
+    observedContainers.add(el);
+    // className 在 SVG 元素上不是字符串，统一走 getAttribute
+    const readId = () => (el.getAttribute('class')?.match(pattern) || [])[1] || '';
+    let lastId = readId();
     new MutationObserver(() => {
-      scanSliders();
-      document.querySelectorAll<HTMLVideoElement>('video').forEach(bindVideoPlay);
-    }).observe(document.body, { childList: true, subtree: true });
-  }
-
-  // 微博：首页/视频流 URL 不变但视频会切换，监听 play 事件刷新
-  if (Utils.getSiteContext().platform === 'weibo') {
-    let weiboRefreshTimer: number | null = null;
-
-    const onWeiboVideoPlay = () => {
-      if (weiboRefreshTimer !== null) clearTimeout(weiboRefreshTimer);
-      weiboRefreshTimer = window.setTimeout(() => {
-        weiboRefreshTimer = null;
-        Downloader.refreshInfo({ silent: true });
-      }, 500);
-    };
-
-    const bindWeiboPlay = (video: HTMLVideoElement) => {
-      if ((video as any).__bdl_wb_bound) return;
-      (video as any).__bdl_wb_bound = true;
-      video.addEventListener('play', onWeiboVideoPlay);
-    };
-
-    document.querySelectorAll<HTMLVideoElement>('video').forEach(bindWeiboPlay);
-    new MutationObserver(() => {
-      document.querySelectorAll<HTMLVideoElement>('video').forEach(bindWeiboPlay);
-    }).observe(document.body, { childList: true, subtree: true });
-  }
-}
-
-function loadFFmpeg(): Promise<void> {
-  if (getFFmpegGlobal()) return Promise.resolve();
-  if (ffmpegLoadPromise) return ffmpegLoadPromise;
-
-  // loader 用 CDNJS（Bilibili CSP 白名单，之前验证可加载）
-  // 核心用 @ffmpeg/core-st（单线程 wasm，无 SharedArrayBuffer 依赖）+ mainName: 'main'
-  Diagnostics.info('ffmpeg', '开始加载 FFmpeg (0.11.6 loader / core-st)');
-  ffmpegLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.11.6/ffmpeg.min.js';
-    script.async = true;
-    script.onload = () => {
-      if (getFFmpegGlobal()) {
-        Diagnostics.info('ffmpeg', 'FFmpeg 脚本加载完成');
-        resolve();
-      } else {
-        Diagnostics.error('ffmpeg', 'FFmpeg 脚本已加载但全局对象不可用');
-        reject(new Error('FFmpeg 加载后不可用'));
+      const id = readId();
+      if (id && id !== lastId) {
+        lastId = id;
+        onVideoChange();
       }
-    };
-    script.onerror = () => {
-      Diagnostics.error('ffmpeg', 'FFmpeg 脚本加载失败（网络或 CDN 被拦截）');
-      reject(new Error('FFmpeg 加载失败'));
-    };
-    (document.head || document.documentElement).appendChild(script);
-  });
+    }).observe(el, { attributes: true, attributeFilter: ['class'] });
+  };
 
-  return ffmpegLoadPromise;
+  const bindVideoPlay = (video: HTMLVideoElement) => {
+    if ((video as any).__bdl_play_bound) return;
+    (video as any).__bdl_play_bound = true;
+    video.addEventListener('play', onVideoChange);
+  };
+
+  const scan = () => {
+    const { classIdSelector, classIdPattern } = watch;
+    if (classIdSelector && classIdPattern) {
+      document.querySelectorAll(classIdSelector).forEach(el => observeClassId(el, classIdPattern));
+    }
+    if (watch.videoPlay) {
+      document.querySelectorAll<HTMLVideoElement>('video').forEach(bindVideoPlay);
+    }
+  };
+
+  scan();
+  new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
 }
 
 function checkFFmpegAvailability(): void {
@@ -272,8 +233,8 @@ function checkFFmpegAvailability(): void {
 
     el.textContent = label || (ready ? '就绪' : '不可用');
     el.className = ready ? 'bdl-method-status ready' : 'bdl-method-status';
-    el.style.background = ready ? '' : '#f8d7da';
-    el.style.color = ready ? '' : '#721c24';
+    el.style.background = ready ? '' : 'var(--bdl-danger-bg)';
+    el.style.color = ready ? '' : 'var(--bdl-danger-text)';
     if (tooltip) el.title = tooltip;
   };
 
@@ -295,7 +256,7 @@ function checkFFmpegAvailability(): void {
     return;
   }
 
-  loadFFmpeg().then(() => {
+  loadFFmpegLoader().then(() => {
     if (!getFFmpegGlobal()) {
       Diagnostics.warn('ffmpeg', 'FFmpeg 脚本加载后仍不可用');
       updateStatus(false);

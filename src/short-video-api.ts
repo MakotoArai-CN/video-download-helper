@@ -1,6 +1,9 @@
-import { CONFIG } from './config.ts';
-import { DouyinInterceptor } from './douyin-interceptor.ts';
+import { Diagnostics } from './diagnostics.ts';
+import { DouyinInterceptor, pickHttpUrl } from './douyin-interceptor.ts';
 import type { DouyinAwemeDetail } from './douyin-interceptor.ts';
+import { KuaishouInterceptor } from './kuaishou-interceptor.ts';
+import type { KuaishouPhoto } from './kuaishou-interceptor.ts';
+import { PLATFORMS } from './platforms.ts';
 import type { ShortVideoApiResponse, ShortVideoAuthor, ShortVideoData, ShortVideoPlatform } from './types.ts';
 import { XAPI } from './x-api.ts';
 
@@ -348,57 +351,12 @@ function extractKuaishouPhotoIds(source: string): string[] {
   return unique(ids);
 }
 
-function collectKuaishouPhotoIdsFromValue(value: unknown, ids: string[], seen = new WeakSet<object>(), depth = 0): void {
-  if (ids.length >= 30 || depth > 6 || value == null) return;
-
-  if (typeof value === 'string') {
-    extractKuaishouPhotoIds(value).forEach(id => ids.push(id));
-    return;
-  }
-
-  if (typeof value !== 'object') return;
-  if (seen.has(value)) return;
-  seen.add(value);
-
-  const entries = Object.entries(value as Record<string, unknown>).slice(0, 300);
-  for (const [key, item] of entries) {
-    if (/^(photoId|photo_id|photoIdStr)$/i.test(key) && typeof item === 'string' && /^[A-Za-z0-9_-]{6,}$/.test(item)) {
-      ids.push(item);
-    }
-
-    collectKuaishouPhotoIdsFromValue(item, ids, seen, depth + 1);
-    if (ids.length >= 30) return;
-  }
-}
-
-function getKuaishouWindowStatePhotoIds(): string[] {
-  const pageWindow = getPageWindow();
-  const stateNames = ['INIT_STATE', '__APOLLO_STATE__', '__INITIAL_STATE__', '__NEXT_DATA__', '__NUXT__'];
-  const ids: string[] = [];
-
-  stateNames.forEach(name => collectKuaishouPhotoIdsFromValue(pageWindow?.[name], ids));
-  return unique(ids);
-}
-
-function getKuaishouStorageSource(): string {
-  const parts: string[] = [];
-  const storages = [window.localStorage, window.sessionStorage];
-
-  storages.forEach(storage => {
-    try {
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index) || '';
-        const value = storage.getItem(key) || '';
-        if (/(kuaishou|kwai|ks|photo|video|feed|reco|apollo)/i.test(`${key}\n${value}`)) {
-          parts.push(`${key}\n${value.slice(0, 100000)}`);
-        }
-      }
-    } catch {}
-  });
-
-  return parts.join('\n');
-}
-
+/**
+ * 当前播放作品的可搜索文本：媒体地址、封面与所在节点子树。
+ *
+ * 限定在可见 video 的子树内，推荐流里同时存在多条内容的 DOM，
+ * 全文搜索会把相邻作品的 id 一并取出。
+ */
 function getKuaishouActiveSource(): string {
   const video = getBestVisibleVideo();
   if (!video) return '';
@@ -411,38 +369,180 @@ function getKuaishouActiveSource(): string {
   ].join('\n');
 }
 
-function getKuaishouResolvableUrls(url: string): string[] {
-  const urls: string[] = [];
-  const ids = [
-    ...extractKuaishouPhotoIds(url),
-    ...extractKuaishouPhotoIds(getKuaishouActiveSource()),
-    ...getKuaishouWindowStatePhotoIds(),
-    ...extractKuaishouPhotoIds(`${getDocumentSource()}\n${getKuaishouStorageSource()}`)
-  ];
-
-  unique(ids).forEach(photoId => {
-    urls.push(`https://www.kuaishou.com/short-video/${photoId}`);
-  });
-
-  urls.push(url);
-  return unique(urls);
+/**
+ * 把拦截到的作品转成面板可用的条目。
+ *
+ * 多路清晰度按码率降序，首项作主地址，其余进 video_backup 供下载失败时重试。
+ */
+function toKuaishouShortVideo(photo: KuaishouPhoto, url: string, label: string): ShortVideoData {
+  const title = photo.caption || getKuaishouDomTitle(getBestVisibleVideo());
+  return {
+    type: 'video',
+    title,
+    desc: photo.caption,
+    author: photo.authorName ? { name: photo.authorName } : {},
+    cover: photo.coverUrl,
+    url: photo.urls[0].url,
+    video_backup: photo.urls.slice(1).map(item => item.url),
+    duration: photo.duration || null,
+    video_id: photo.id,
+    platform: 'kuaishou',
+    sourceUrl: url,
+    itemLabel: label
+  };
 }
 
+/**
+ * 取与当前播放内容对应的拦截结果。
+ *
+ * 先按作品 id 精确匹配，再退到封面比对：推荐流一次请求会返回多条内容，
+ * 取最近一条会下到隔壁视频，故此处只接受能对上当前播放内容的结果。
+ *
+ * 缓存为空时直接返回，避免白跑一次 DOM 序列化：拦截器未命中的页面上，
+ * 后续查询无论如何都取不到结果。
+ */
+function getKuaishouCorrelatedItem(url: string): ShortVideoData | null {
+  if (KuaishouInterceptor.size() === 0) return null;
+
+  for (const id of extractKuaishouPhotoIds(url)) {
+    const photo = KuaishouInterceptor.getById(id);
+    if (photo) return toKuaishouShortVideo(photo, url, '当前播放视频');
+  }
+
+  for (const id of extractKuaishouPhotoIds(getKuaishouActiveSource())) {
+    const photo = KuaishouInterceptor.getById(id);
+    if (photo) return toKuaishouShortVideo(photo, url, '当前播放视频');
+  }
+
+  const poster = normalizeUrl(getBestVisibleVideo()?.poster);
+  const byCover = poster ? KuaishouInterceptor.getByCover(poster) : null;
+  return byCover ? toKuaishouShortVideo(byCover, url, '当前播放视频') : null;
+}
+
+const KUAISHOU_MEDIA_HOSTS = /(kwaicdn\.com|kwimgs\.com|yximgs\.com|chenzhongtech\.com|ndcimgs\.com)/i;
+
+/** 分片清单、图片与页面资源：都不是可直接落盘的整段视频。 */
+const KUAISHOU_NON_MEDIA_EXT = /\.(m3u8|mpd|ts|jpe?g|png|webp|gif|svg|ico|css|js|json|html?)(?:[?#]|$)/i;
+
+/**
+ * 判断 video 元素上的地址是否可直接保存。
+ *
+ * 该地址即正在播放的媒体，故不限定 CDN 主机：快手视频分批投放在不同域名下
+ * （已见 kwaicdn、yximgs、ndcimgs），白名单会漏掉新域名而整体取源失败。
+ * 只排除分片清单与非媒体资源，保存 m3u8 会得到无法播放的文本文件。
+ */
+function isKuaishouPlayableUrl(value: unknown): value is string {
+  const url = normalizeUrl(value);
+  return Boolean(url && !KUAISHOU_NON_MEDIA_EXT.test(url));
+}
+
+/**
+ * 判断资源请求是否为快手视频。
+ *
+ * performance 里混有埋点、脚本与封面图，也不区分来源站点，故同时校验扩展名与
+ * CDN 主机。flv 与 mp4 都是整段文件，可直接落盘。
+ */
 function isKuaishouVideoUrl(value: unknown): value is string {
   const url = normalizeUrl(value);
   return Boolean(url
-    && /\.(mp4)(?:[?#]|$)/i.test(url)
-    && /(kwaicdn\.com|kwimgs\.com|yximgs\.com|chenzhongtech\.com)/i.test(url));
+    && /\.(mp4|flv)(?:[?#]|$)/i.test(url)
+    && KUAISHOU_MEDIA_HOSTS.test(url));
 }
 
-function getKuaishouPerformanceVideoUrls(): string[] {
+/**
+ * 媒体地址的可诊断特征，形如 `txmov6.a.yximgs.com/.mp4`。
+ *
+ * 只取协议、主机与扩展名：完整地址带签名参数，写进日志会随诊断报告
+ * 提交到公开 issue。
+ */
+function describeMediaUrl(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return 'empty';
+  if (raw.startsWith('blob:')) return 'blob';
+  if (raw.startsWith('data:')) return 'data';
   try {
-    return unique(performance.getEntriesByType('resource')
-      .map(entry => entry.name)
-      .filter(isKuaishouVideoUrl));
+    const parsed = new URL(raw, location.href);
+    const ext = (parsed.pathname.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || 'none';
+    return `${parsed.hostname}/.${ext}`;
   } catch {
-    return [];
+    return 'invalid';
   }
+}
+
+/**
+ * 快手取源失败时的现场快照，用于在诊断报告中定位缺口。
+ *
+ * 取源共有 GraphQL 拦截、DOM、performance 三条路径。`gql` 为拦截到的作品数：
+ * 为 0 说明请求形态或字段结构变了，非 0 却仍失败则是没能与当前播放内容对应上；
+ * 其余字段区分页面用了 MSE（currentSrc 为 blob）、扩展名不在白名单、
+ * 以及页面尚未开始播放。
+ */
+function describeKuaishouSources(): string {
+  const best = getBestVisibleVideo();
+  const win = getPageWindow();
+  const stateKeys = ['__APOLLO_STATE__', '__INITIAL_STATE__', '__NUXT__', '__PRELOADED_STATE__', 'pageData']
+    .filter(key => {
+      try {
+        return win?.[key] != null;
+      } catch {
+        return false;
+      }
+    });
+
+  let cdn: string[] = [];
+  try {
+    cdn = unique(performance.getEntriesByType('resource')
+      .map(entry => entry.name)
+      .filter(name => KUAISHOU_MEDIA_HOSTS.test(name))
+      .map(describeMediaUrl)).slice(0, 8);
+  } catch {}
+
+  return [
+    `videos=${document.querySelectorAll('video').length}`,
+    `currentSrc=${describeMediaUrl(best?.currentSrc)}`,
+    `src=${describeMediaUrl(best?.getAttribute('src'))}`,
+    `poster=${best?.poster ? 'yes' : 'no'}`,
+    `gql=${KuaishouInterceptor.installed ? KuaishouInterceptor.size() : 'off'}`,
+    `state=[${stateKeys.join(',') || 'none'}]`,
+    `cdn=[${cdn.join(' ') || 'none'}]`
+  ].join(' ');
+}
+
+/**
+ * 从资源加载记录中取快手视频地址。
+ *
+ * 单趟遍历并就地去重：分段 map/filter 会为全部记录各建一个中间数组，
+ * 而这里只关心其中极少数命中项。
+ */
+function getKuaishouPerformanceVideoUrls(): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  try {
+    for (const entry of performance.getEntriesByType('resource')) {
+      const name = entry.name;
+      if (seen.has(name) || !isKuaishouVideoUrl(name)) continue;
+      seen.add(name);
+      urls.push(name);
+    }
+  } catch {}
+
+  return urls;
+}
+
+/**
+ * 汇总当前播放视频可用的下载地址。
+ *
+ * video 元素上的地址排在前面作主地址，performance 里同一作品的其他清晰度
+ * 作备份地址。
+ *
+ * @param video 可见的 video 元素
+ */
+function collectKuaishouMediaUrls(video: HTMLVideoElement | null): string[] {
+  return unique([
+    ...[normalizeUrl(video?.currentSrc), normalizeUrl(video?.src)].filter(isKuaishouPlayableUrl),
+    ...getKuaishouPerformanceVideoUrls()
+  ]);
 }
 
 function getKuaishouDomTitle(video: HTMLVideoElement | null): string {
@@ -478,31 +578,6 @@ function getKuaishouDomAuthor(video: HTMLVideoElement | null): ShortVideoAuthor 
   return name ? { name } : {};
 }
 
-function getKuaishouDomMediaFallback(url: string): ShortVideoData | null {
-  const video = getBestVisibleVideo();
-  const videoUrls = unique([
-    normalizeUrl(video?.currentSrc),
-    normalizeUrl(video?.src),
-    ...getKuaishouPerformanceVideoUrls()
-  ].filter(isKuaishouVideoUrl));
-
-  if (videoUrls.length === 0) return null;
-
-  const title = getKuaishouDomTitle(video);
-  return {
-    type: 'video',
-    title,
-    desc: title,
-    author: getKuaishouDomAuthor(video),
-    cover: normalizeUrl(video?.poster) || '',
-    url: videoUrls[0],
-    video_backup: videoUrls.slice(1),
-    platform: 'kuaishou',
-    sourceUrl: url,
-    itemLabel: '当前播放视频'
-  };
-}
-
 function isKuaishouFeedPage(url: string): boolean {
   const pathname = new URL(url).pathname.replace(/\/+$/, '') || '/';
   return pathname === '/new-reco' || pathname === '/';
@@ -522,15 +597,23 @@ function isWeiboNonContentPage(url: string, candidates: string[]): boolean {
 // ---------------------------------------------------------------------------
 // 快手本地解析
 // ---------------------------------------------------------------------------
-async function parseKuaishouLocal(url: string): Promise<ShortVideoData | null> {
-  const video = getBestVisibleVideo();
-  const videoUrls = unique([
-    normalizeUrl(video?.currentSrc),
-    normalizeUrl(video?.src),
-    ...getKuaishouPerformanceVideoUrls()
-  ].filter(isKuaishouVideoUrl));
+/**
+ * 从页面取当前播放视频。
+ *
+ * 首次取不到时按 250ms 轮询共 2 秒：切换作品或页面刚加载时，video 上的
+ * 地址会短暂为空。
+ *
+ * @param url 当前页地址
+ * @param itemLabel 面板上的条目标签，推荐流里用于说明只取当前播放的一条
+ */
+async function parseKuaishouLocal(url: string, itemLabel?: string): Promise<ShortVideoData | null> {
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 250));
 
-  if (videoUrls.length > 0) {
+    const video = getBestVisibleVideo();
+    const videoUrls = collectKuaishouMediaUrls(video);
+    if (videoUrls.length === 0) continue;
+
     const title = getKuaishouDomTitle(video);
     return {
       type: 'video',
@@ -541,35 +624,11 @@ async function parseKuaishouLocal(url: string): Promise<ShortVideoData | null> {
       url: videoUrls[0],
       video_backup: videoUrls.slice(1),
       platform: 'kuaishou',
-      sourceUrl: url
+      sourceUrl: url,
+      itemLabel
     };
   }
 
-  // Poll for video to appear in DOM for up to 2s
-  for (let i = 0; i < 8; i++) {
-    const v2 = getBestVisibleVideo();
-    const urls2 = unique([
-      normalizeUrl(v2?.currentSrc),
-      normalizeUrl(v2?.src),
-      ...getKuaishouPerformanceVideoUrls()
-    ].filter(isKuaishouVideoUrl));
-
-    if (urls2.length > 0) {
-      const title2 = getKuaishouDomTitle(v2);
-      return {
-        type: 'video',
-        title: title2,
-        desc: title2,
-        author: getKuaishouDomAuthor(v2),
-        cover: normalizeUrl(v2?.poster) || '',
-        url: urls2[0],
-        video_backup: urls2.slice(1),
-        platform: 'kuaishou',
-        sourceUrl: url
-      };
-    }
-    await new Promise(r => setTimeout(r, 250));
-  }
   return null;
 }
 
@@ -979,70 +1038,64 @@ async function parseToutiaoLocal(url: string): Promise<ShortVideoData | null> {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// 皮皮搞笑本地解析
-// ---------------------------------------------------------------------------
-async function parsePipigxLocal(url: string): Promise<ShortVideoData | null> {
-  const win = getPageWindow();
+/**
+ * 各平台的解析入口。
+ *
+ * 统一签名：拿到最终可用的 ShortVideoData 则返回，无内容返回 null 由调用方
+ * 生成通用错误文案；需要更具体的提示时（微博未打开详情页）由解析器自行抛出。
+ *
+ * 表放在本文件而非 platforms.ts：解析器实现依赖本文件的辅助函数，
+ * 反向引用会形成循环导入。platforms.ts 只承载数据，不承载行为。
+ */
+const PARSERS: Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoData | null>> = {
+  douyin: url => ShortVideoAPI.parseDouyinLocal(url),
 
-  const extract = (value: any, depth: number, seen: WeakSet<object>): ShortVideoData | null => {
-    if (depth > 8 || !value || typeof value !== 'object') return null;
-    if (seen.has(value)) return null;
-    seen.add(value);
-    if (value.video_url || value.play_url || value.videoUrl) {
-      const videoUrl = normalizeUrl(value.video_url || value.play_url || value.videoUrl);
-      if (videoUrl) {
-        return {
-          type: 'video',
-          title: value.title || value.content || document.title || '皮皮搞笑视频',
-          desc: value.content || '',
-          author: { name: value.author?.name || value.user?.name || '' },
-          cover: normalizeUrl(value.cover || value.thumb || ''),
-          url: videoUrl,
-          platform: 'pipigx',
-          sourceUrl: url
-        };
-      }
+  kuaishou: async url => {
+    // GraphQL 拦截结果最完整（带多路清晰度与标题），且不受 MSE 播放影响
+    const correlated = getKuaishouCorrelatedItem(url);
+    if (correlated) return combineShortVideoItems([correlated], 'kuaishou', url);
+
+    // 推荐流页无独立详情接口，只能从页面取源；标注条目说明只取当前播放的一条
+    const local = await parseKuaishouLocal(url, isKuaishouFeedPage(url) ? '当前播放视频' : undefined);
+    if (local) return combineShortVideoItems([local], 'kuaishou', url);
+
+    // 详情页只有一条内容，对不上当前播放内容也不会下错
+    if (!isKuaishouFeedPage(url)) {
+      const latest = KuaishouInterceptor.getLatest();
+      if (latest) return combineShortVideoItems([toKuaishouShortVideo(latest, url, '')], 'kuaishou', url);
     }
-    for (const [, v] of Object.entries(value).slice(0, 100)) {
-      const r = extract(v, depth + 1, seen);
-      if (r) return r;
-    }
+
+    Diagnostics.debug('kuaishou', `未取到媒体源: ${describeKuaishouSources()}`);
     return null;
-  };
+  },
 
-  const stateKeys = ['__INITIAL_STATE__', '__NUXT__', 'APP_INITIAL_STATE'];
-  for (const key of stateKeys) {
-    try {
-      const r = extract(win[key], 0, new WeakSet());
-      if (r) return r;
-    } catch {}
-  }
+  xiaohongshu: async url => {
+    const local = await parseXhsLocal(url);
+    return local ? combineShortVideoItems([local], 'xiaohongshu', url) : null;
+  },
 
-  // Poll DOM
-  for (let i = 0; i < 8; i++) {
-    const v = getBestVisibleVideo();
-    const src = v?.currentSrc || v?.src;
-    if (src && src.startsWith('http')) {
-      return {
-        type: 'video',
-        title: document.title || '皮皮搞笑视频',
-        desc: '',
-        author: {},
-        cover: v?.poster || '',
-        url: src,
-        platform: 'pipigx',
-        sourceUrl: url
-      };
-    }
-    await new Promise(r => setTimeout(r, 250));
+  weibo: async url => {
+    const local = await parseWeiboLocal(url);
+    if (local) return combineShortVideoItems([local], 'weibo', url);
+    if (isWeiboNonContentPage(url, [url])) throw new Error('请打开微博视频详情页后再试');
+    return null;
+  },
+
+  toutiao: async url => {
+    const local = await parseToutiaoLocal(url);
+    return local ? combineShortVideoItems([local], 'toutiao', url) : null;
+  },
+
+  x: async url => {
+    const data = await XAPI.parseUrl(url);
+    if (!data) return null;
+    return combineShortVideoItems(data.items?.length ? data.items : [data], 'x', url);
   }
-  return null;
-}
+};
 
 export const ShortVideoAPI = {
   getPlatformConfig(platform: ShortVideoPlatform) {
-    return CONFIG.SHORT_VIDEO_PLATFORMS[platform];
+    return PLATFORMS[platform];
   },
 
   getPlatformLabel(platform: ShortVideoPlatform): string {
@@ -1058,19 +1111,15 @@ export const ShortVideoAPI = {
     };
   },
 
-  getProxyUrl(_url: string, _platform: ShortVideoPlatform): string | null {
-    return null;
-  },
-
   normalizeDouyinDetail(detail: DouyinAwemeDetail, url: string): ShortVideoData {
     const qualities = DouyinInterceptor.extractQualities(detail);
     const primaryUrl = qualities[0]?.url || '';
     const backupUrls = qualities.slice(1).map(q => q.url);
     const video = detail.video;
-    const cover = video?.cover?.url_list?.find(u => u.startsWith('http')) || '';
-    const avatarUrl = detail.author?.avatar_thumb?.url_list?.find(u => u.startsWith('http')) || '';
-    const musicUrl = detail.music?.play_url?.url_list?.find(u => u.startsWith('http')) || detail.music?.play_url?.uri || '';
-    const musicCover = detail.music?.cover_medium?.url_list?.find(u => u.startsWith('http')) || '';
+    const cover = pickHttpUrl(video?.cover?.url_list);
+    const avatarUrl = pickHttpUrl(detail.author?.avatar_thumb?.url_list);
+    const musicUrl = pickHttpUrl(detail.music?.play_url?.url_list) || detail.music?.play_url?.uri || '';
+    const musicCover = pickHttpUrl(detail.music?.cover_medium?.url_list);
 
     const items: ShortVideoData[] = qualities.map(q => ({
       type: 'video' as const,
@@ -1099,7 +1148,8 @@ export const ShortVideoAPI = {
       music: musicUrl ? { title: detail.music?.title, author: detail.music?.author, url: musicUrl, cover: musicCover } : undefined,
       platform: 'douyin',
       sourceUrl: url,
-      items: items.length > 1 ? items : undefined
+      items: items.length > 1 ? items : undefined,
+      alternativeSources: items.length > 1
     };
   },
 
@@ -1330,66 +1380,11 @@ export const ShortVideoAPI = {
   },
 
   async parseUrl(url: string, platform: ShortVideoPlatform): Promise<ShortVideoData> {
-    // 抖音：纯本地方案
-    if (platform === 'douyin') {
-      const local = await this.parseDouyinLocal(url);
-      if (local) return local;
-      throw new Error('解析失败，无法获取抖音视频信息');
-    }
-
-    // 快手
-    if (platform === 'kuaishou') {
-      if (isKuaishouFeedPage(url)) {
-        const dom = getKuaishouDomMediaFallback(url);
-        if (dom) return combineShortVideoItems([dom], platform, url);
-      }
-      const local = await parseKuaishouLocal(url);
-      if (local) return combineShortVideoItems([local], platform, url);
-      throw new Error('解析失败，无法获取快手视频');
-    }
-
-    // 小红书
-    if (platform === 'xiaohongshu') {
-      const local = await parseXhsLocal(url);
-      if (local) return combineShortVideoItems([local], platform, url);
-      throw new Error('解析失败，无法获取小红书内容');
-    }
-
-    // 微博
-    if (platform === 'weibo') {
-      const local = await parseWeiboLocal(url);
-      if (local) return combineShortVideoItems([local], platform, url);
-      if (isWeiboNonContentPage(url, [url])) {
-        throw new Error('请打开微博视频详情页后再试');
-      }
-      throw new Error('解析失败，无法获取微博视频');
-    }
-
-    // 今日头条
-    if (platform === 'toutiao') {
-      const local = await parseToutiaoLocal(url);
-      if (local) return combineShortVideoItems([local], platform, url);
-      throw new Error('解析失败，无法获取头条视频');
-    }
-
-    // 皮皮搞笑
-    if (platform === 'pipigx') {
-      const local = await parsePipigxLocal(url);
-      if (local) return combineShortVideoItems([local], platform, url);
-      throw new Error('解析失败，无法获取皮皮搞笑视频');
-    }
-
-    // X (Twitter)
-    if (platform === 'x') {
-      const data = await XAPI.parseUrl(url);
-      if (data) {
-        const list = data.items?.length ? data.items : [data];
-        return combineShortVideoItems(list, platform, url);
-      }
-      throw new Error('解析失败，无法获取 X 视频');
-    }
-
-    throw new Error('不支持的平台');
+    const parse = PARSERS[platform];
+    if (!parse) throw new Error('不支持的平台');
+    const data = await parse(url);
+    if (data) return data;
+    throw new Error(`解析失败，无法获取${this.getPlatformLabel(platform)}内容`);
   },
 
   normalizeResponse(raw: ShortVideoApiResponse['data'], platform: ShortVideoPlatform, url: string): ShortVideoData {

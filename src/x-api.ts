@@ -7,7 +7,7 @@ declare const unsafeWindow: any;
 const WEB_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 
 // TweetResultByRestId GraphQL 端点。X 的 queryId 会不定期变更，
-// 因此我们保留一组已知的 fallback，并尝试从页面 script 中动态发现最新的。
+// 故保留一组已知的 fallback，并尝试从页面 script 中动态发现最新的。
 const TWEET_QUERY_IDS = [
   'zJvfJs3gSbrVhC0MKjt_OQ',
   'OoJd6A50cv8GsifjoOHGfg',
@@ -223,13 +223,15 @@ function normalizeMediaItems(tweet: XTweetResult, pageUrl: string): ShortVideoDa
       const variants = m.video_info?.variants || [];
       const best = pickBestVariant(variants);
       if (!best?.url) return;
+      // 类型字段缺失时按地址判定：GIF 的文件走 /tweet_video/，普通视频走 /ext_tw_video/ 等
+      const animated = m.type === 'animated_gif' || /\/tweet_video\//.test(best.url);
       const backups = variants
         .filter(v => v.content_type === 'video/mp4' && v.url !== best.url)
         .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
         .map(v => v.url);
       results.push({
         type: 'video',
-        title: text || `X 视频${label}`,
+        title: text || `X ${animated ? 'GIF' : '视频'}${label}`,
         desc: text,
         author,
         cover: m.media_url_https || '',
@@ -238,7 +240,8 @@ function normalizeMediaItems(tweet: XTweetResult, pageUrl: string): ShortVideoDa
         duration: m.video_info?.duration_millis ? m.video_info.duration_millis / 1000 : null,
         platform: 'x',
         sourceUrl: pageUrl,
-        itemLabel: `视频${label} ${best.bitrate ? Math.round((best.bitrate || 0) / 1000) + 'kbps' : ''}`.trim()
+        animated,
+        itemLabel: `${animated ? 'GIF' : '视频'}${label} ${best.bitrate ? Math.round((best.bitrate || 0) / 1000) + 'kbps' : ''}`.trim()
       });
     } else if (m.type === 'photo' && m.media_url_https) {
       results.push({

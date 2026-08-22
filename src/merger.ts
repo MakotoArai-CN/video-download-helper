@@ -1,4 +1,5 @@
 import { LEARNING_DISCLAIMER } from './config.ts';
+import { Diagnostics } from './diagnostics.ts';
 import type { Metadata } from './types.ts';
 
 export const JSMerger = {
@@ -236,6 +237,7 @@ export const JSMerger = {
 };
 
 declare const FFmpeg: any;
+declare const unsafeWindow: any;
 declare function GM_xmlhttpRequest(details: {
   method: string;
   url: string;
@@ -254,6 +256,64 @@ declare function GM_xmlhttpRequest(details: {
 // 所以通过 GM_xmlhttpRequest 拉成 blob URL 再交给 createFFmpeg。
 const FFMPEG_CORE_JS = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js';
 const FFMPEG_CORE_WASM = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.wasm';
+
+// loader 走 CDNJS：Bilibili 的 CSP 白名单包含该域名。
+const FFMPEG_LOADER_JS = 'https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.11.6/ffmpeg.min.js';
+
+/**
+ * 取 FFmpeg 全局对象。
+ *
+ * 脚本注入到页面上下文时全局挂在 unsafeWindow 上，取到后同步到沙箱全局，
+ * 让 `declare const FFmpeg` 的直接引用也能命中。
+ *
+ * @returns FFmpeg 命名空间，未加载时为 null
+ */
+export function getFFmpegGlobal(): any {
+  if (typeof FFmpeg !== 'undefined') return FFmpeg;
+  if (typeof unsafeWindow !== 'undefined' && unsafeWindow.FFmpeg) {
+    (globalThis as any).FFmpeg = unsafeWindow.FFmpeg;
+    return unsafeWindow.FFmpeg;
+  }
+  return null;
+}
+
+let loaderPromise: Promise<void> | null = null;
+
+/**
+ * 注入 FFmpeg loader 脚本，已加载则直接返回。
+ *
+ * @returns 全局对象可用时兑现
+ */
+export function loadFFmpegLoader(): Promise<void> {
+  if (getFFmpegGlobal()) return Promise.resolve();
+  if (loaderPromise) return loaderPromise;
+
+  Diagnostics.info('ffmpeg', '开始加载 FFmpeg (0.11.6 loader / core-st)');
+  loaderPromise = new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = FFMPEG_LOADER_JS;
+    script.async = true;
+    script.onload = () => {
+      if (getFFmpegGlobal()) {
+        Diagnostics.info('ffmpeg', 'FFmpeg 脚本加载完成');
+        resolve();
+      } else {
+        Diagnostics.error('ffmpeg', 'FFmpeg 脚本已加载但全局对象不可用');
+        reject(new Error('FFmpeg 加载后不可用'));
+      }
+    };
+    script.onerror = () => {
+      Diagnostics.error('ffmpeg', 'FFmpeg 脚本加载失败（网络或 CDN 被拦截）');
+      reject(new Error('FFmpeg 加载失败'));
+    };
+    (document.head || document.documentElement).appendChild(script);
+  }).catch(err => {
+    loaderPromise = null;
+    throw err;
+  });
+
+  return loaderPromise;
+}
 
 function fetchAsBlobUrl(url: string, mime: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -305,6 +365,53 @@ function prepareCorePath(): Promise<string> {
   return corePathPromise;
 }
 
+/** 新建并加载一个 ffmpeg 实例。核心 JS / wasm 已缓存，重复加载只是重新编译。 */
+function createInstance(): Promise<any> {
+  return loadFFmpegLoader().then(() => prepareCorePath()).then(corePath => {
+    const ns = getFFmpegGlobal();
+    if (!ns) throw new Error('FFmpeg未加载');
+    const instance = ns.createFFmpeg({ log: false, corePath, mainName: 'main' });
+    return instance.load().then(() => instance);
+  });
+}
+
+/** 写入虚拟文件系统的输入文件。 */
+interface VfsFile {
+  name: string;
+  data: Uint8Array;
+}
+
+/**
+ * 用一个全新实例跑一条 ffmpeg 命令并取回产物。
+ *
+ * core-st 的运行时在 main() 返回后即退出，一个实例只能跑一条命令：第二条会抛
+ * ExitStatus(0) 并把 loader 的 running 标志永久置位。故实例用后即弃，
+ * owner.ffmpeg 上由 init() 预热出的那一个在首次调用时被消费。
+ *
+ * @param owner 持有预热实例的对象，实例被取走后该字段置空
+ * @param inputs 命令执行前写入的输入文件
+ * @param argv ffmpeg 参数，不含程序名
+ * @param outFile 产物在虚拟文件系统中的路径
+ * @returns 产物内容
+ */
+function runOnce(owner: { ffmpeg: any }, inputs: VfsFile[], argv: string[], outFile: string): Promise<Uint8Array> {
+  const prepared = owner.ffmpeg && owner.ffmpeg.isLoaded()
+    ? Promise.resolve(owner.ffmpeg)
+    : createInstance();
+  owner.ffmpeg = null;
+
+  return prepared.then(instance => {
+    inputs.forEach(file => instance.FS('writeFile', file.name, file.data));
+    return instance.run(...argv)
+      .catch((e: any) => {
+        // 产物已写出、运行时以 exit(0) 收尾时 loader 仍会抛，按成功处理
+        if (e && e.name === 'ExitStatus' && e.status === 0) return;
+        throw e;
+      })
+      .then(() => instance.FS('readFile', outFile) as Uint8Array);
+  });
+}
+
 export const FFmpegMerger = {
   name: 'FFmpeg合并',
   status: 'loading' as string,
@@ -320,21 +427,15 @@ export const FFmpegMerger = {
   },
 
   init(): Promise<boolean> {
-    if (typeof FFmpeg === 'undefined') { this.status = 'unavailable'; return Promise.reject(new Error('FFmpeg未加载')); }
     if (this.ffmpeg && this.ffmpeg.isLoaded()) {
       this.status = 'ready';
       return Promise.resolve(true);
     }
     this.status = 'loading';
-    return prepareCorePath().then(corePath => {
-      if (!this.ffmpeg) {
-        this.ffmpeg = FFmpeg.createFFmpeg({ log: false, corePath, mainName: 'main' });
-      }
-      if (this.ffmpeg.isLoaded()) {
-        this.status = 'ready';
-        return true;
-      }
-      return this.ffmpeg.load().then(() => { this.status = 'ready'; return true; });
+    return createInstance().then(instance => {
+      this.ffmpeg = instance;
+      this.status = 'ready';
+      return true;
     }).catch((e: any) => {
       this.status = 'error';
       this.unavailableReason = e?.message || String(e);
@@ -343,16 +444,51 @@ export const FFmpegMerger = {
   },
 
   merge(videoBuffer: ArrayBuffer, audioBuffer: ArrayBuffer, metadata: { title?: string; author?: string }): Promise<ArrayBuffer> {
-    return this.init().then(() => {
-      this.ffmpeg.FS('writeFile', 'video.mp4', new Uint8Array(videoBuffer));
-      this.ffmpeg.FS('writeFile', 'audio.m4a', new Uint8Array(audioBuffer));
-      return this.ffmpeg.run('-i','video.mp4','-i','audio.m4a','-c','copy','-map','0:v:0','-map','1:a:0',
+    return this.init().then(() => runOnce(
+      this,
+      [{ name: 'video.mp4', data: new Uint8Array(videoBuffer) }, { name: 'audio.m4a', data: new Uint8Array(audioBuffer) }],
+      ['-i','video.mp4','-i','audio.m4a','-c','copy','-map','0:v:0','-map','1:a:0',
         '-metadata','title='+(metadata.title||''),'-metadata','artist='+(metadata.author||''),
-        '-metadata','comment='+LEARNING_DISCLAIMER,'output.mp4');
-    }).then(() => {
-      const data = this.ffmpeg.FS('readFile', 'output.mp4');
-      try { this.ffmpeg.FS('unlink','video.mp4'); this.ffmpeg.FS('unlink','audio.m4a'); this.ffmpeg.FS('unlink','output.mp4'); } catch(e) {}
-      return data.buffer;
-    });
+        '-metadata','comment='+LEARNING_DISCLAIMER,'output.mp4'],
+      'output.mp4'
+    )).then(data => data.buffer as ArrayBuffer);
+  }
+};
+
+/** 转 GIF 的可选参数。 */
+export interface GifOptions {
+  /** 输出帧率，缺省 15。 */
+  fps?: number;
+  /** 输出宽度上限，源更窄时保持原宽，缺省 640。 */
+  maxWidth?: number;
+}
+
+export const GifConverter = {
+  /**
+   * 把视频转成 GIF。
+   *
+   * 走 palettegen / paletteuse 两遍法：GIF 每帧限 256 色，由整段画面统计出的
+   * 调色板比编码器的默认调色板少很多色带。两遍是两条独立命令，各占一个实例。
+   *
+   * @param source 视频内容，需为 ffmpeg 能解的封装（X 的 GIF 为 mp4）
+   * @param options 帧率与宽度上限
+   * @returns GIF 文件内容
+   */
+  convert(source: ArrayBuffer, options: GifOptions = {}): Promise<ArrayBuffer> {
+    const fps = options.fps ?? 15;
+    const maxWidth = options.maxWidth ?? 640;
+    // min() 的逗号需转义，否则会被当成滤镜链的分隔符
+    const scale = `fps=${fps},scale=min(${maxWidth}\\,iw):-1:flags=lanczos`;
+    const input = new Uint8Array(source);
+
+    return FFmpegMerger.init()
+      .then(() => runOnce(FFmpegMerger, [{ name: 'in.mp4', data: input }],
+        ['-i', 'in.mp4', '-vf', `${scale},palettegen=max_colors=256`, 'pal.png'], 'pal.png'))
+      .then(palette => runOnce(FFmpegMerger,
+        [{ name: 'in.mp4', data: input }, { name: 'pal.png', data: palette }],
+        ['-i', 'in.mp4', '-i', 'pal.png', '-filter_complex',
+          `${scale}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3`, '-loop', '0', 'out.gif'],
+        'out.gif'))
+      .then(data => data.buffer as ArrayBuffer);
   }
 };

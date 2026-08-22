@@ -25,17 +25,17 @@ export const CompleteEffect = {
   },
 
   createParticles(container: Element): void {
-    const colors = ['#fb7299','#ff9eb5','#00a1d6','#66d4ff','#f25d8e','#0081b3'];
+    // 颜色由样式表按平台与深浅色决定，此处只分配色位：
+    // 主色、主色提亮、点缀色三种，避免同屏出现两套色系。
+    const tints = ['', 'is-light', 'is-spark'];
     for (let i = 0; i < 30; i++) {
       const particle = document.createElement('div');
-      particle.className = 'bdl-particle';
+      particle.className = ('bdl-particle ' + tints[i % tints.length]).trim();
       const angle = (Math.PI * 2 * i) / 30;
       const velocity = 120 + Math.random() * 80;
       const size = 6 + Math.random() * 10;
       particle.style.width = size + 'px';
       particle.style.height = size + 'px';
-      particle.style.background = colors[Math.floor(Math.random() * colors.length)];
-      particle.style.boxShadow = '0 0 10px ' + colors[Math.floor(Math.random() * colors.length)];
       particle.style.setProperty('--tx', (Math.cos(angle) * velocity) + 'px');
       particle.style.setProperty('--ty', (Math.sin(angle) * velocity) + 'px');
       particle.style.animationDelay = (Math.random() * 0.3) + 's';

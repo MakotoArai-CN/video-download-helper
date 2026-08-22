@@ -1,3 +1,4 @@
+import { matchPlatform } from './platforms.ts';
 import type { SiteContext, VideoId } from './types.ts';
 
 export const Utils = {
@@ -16,35 +17,14 @@ export const Utils = {
     const host = window.location.hostname.toLowerCase();
     const videoId = this.getVideoId();
 
+    // B 站单列在前：它是唯一按路径而非仅按域名识别的站点，
+    // 且 bilibili.com 下非视频页不应视为受支持。
     if (host.endsWith('bilibili.com') && videoId) {
-      return {
-        kind: 'bilibili',
-        platform: 'bilibili',
-        sourceType: videoId.type
-      };
+      return { kind: 'bilibili', platform: 'bilibili', sourceType: videoId.type };
     }
 
-    if (host.endsWith('douyin.com') || host.endsWith('iesdouyin.com')) {
-      return { kind: 'short-video', platform: 'douyin' };
-    }
-    if (host.endsWith('kuaishou.com')) {
-      return { kind: 'short-video', platform: 'kuaishou' };
-    }
-    if (host.endsWith('xiaohongshu.com') || host.endsWith('xhslink.com') || host.endsWith('xhs.cn')) {
-      return { kind: 'short-video', platform: 'xiaohongshu' };
-    }
-    if (host.endsWith('weibo.com') || host.endsWith('weibo.cn')) {
-      return { kind: 'short-video', platform: 'weibo' };
-    }
-    if (host.endsWith('toutiao.com')) {
-      return { kind: 'short-video', platform: 'toutiao' };
-    }
-    if (host.endsWith('ippzone.com') || host.endsWith('pipigx.com')) {
-      return { kind: 'short-video', platform: 'pipigx' };
-    }
-    if (host === 'x.com' || host.endsWith('.x.com') || host === 'twitter.com' || host.endsWith('.twitter.com')) {
-      return { kind: 'short-video', platform: 'x' };
-    }
+    const platform = matchPlatform(host);
+    if (platform) return { kind: 'short-video', platform };
 
     return { kind: 'unsupported', platform: null };
   },
@@ -78,12 +58,27 @@ export const Utils = {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   },
 
+  /**
+   * 清理文件名中不能出现的字符并限长。
+   *
+   * 长度按 UTF-16 长度计（文件系统的限制也按此计），但以码点为单位取舍，
+   * 不会把一对代理项切开后编码成替换字符。
+   *
+   * @param filename 原始名称
+   * @returns 可用于保存的文件名，最长 180
+   */
   sanitizeFilename(filename: string): string {
-    return filename
+    const cleaned = filename
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
       .replace(/\s+/g, ' ')
-      .trim()
-      .substring(0, 180);
+      .trim();
+    if (cleaned.length <= 180) return cleaned;
+    let result = '';
+    for (const char of cleaned) {
+      if (result.length + char.length > 180) break;
+      result += char;
+    }
+    return result;
   },
 
   inferExtension(url: string, fallback: string): string {

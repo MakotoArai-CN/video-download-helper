@@ -3,12 +3,14 @@
   "private": true,
   "scripts": {
     "build": "vite build",
-    "dev": "VDH_DEV=1 vite build --watch",
+    "dev": "vite",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "vite": "^8.0.0"
+    "terser": "5.50.0",
+    "vite": "^8.0.0",
+    "vite-plugin-monkey": "8.1.0"
   },
   "peerDependencies": {
     "typescript": "^5"

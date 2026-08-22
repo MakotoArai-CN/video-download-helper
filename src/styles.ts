@@ -6,6 +6,81 @@ export const STYLES = `
             line-height: 1.4;
             -webkit-font-smoothing: antialiased;
             text-rendering: optimizeLegibility;
+
+            /* 品牌色令牌声明在 :host 而非 #bdl-panel：完成动画等浮层挂在
+               shadow root 下但不在面板子树内，只有 :host 能覆盖整个根节点。
+               此处的值是 syncBrand() 执行前的兜底，与 platforms.ts 的
+               BILIBILI_BRAND 保持一致；applyBrand() 写在宿主元素的行内样式上，
+               优先级高于本规则，因此按平台改色不会被这里覆盖。 */
+            --bdl-brand: #ff6699;
+            --bdl-brand-deep: #e84b85;
+            --bdl-brand-accent: #00aeec;
+            --bdl-brand-contrast: #ffffff;
+            --bdl-brand-spark: var(--bdl-brand);
+            --bdl-brand-soft: color-mix(in srgb, var(--bdl-brand) 12%, transparent);
+            --bdl-brand-light: color-mix(in srgb, var(--bdl-brand) 55%, white);
+            --bdl-brand-accent-deep: color-mix(in srgb, var(--bdl-brand-accent) 82%, black);
+            --bdl-brand-accent-light: color-mix(in srgb, var(--bdl-brand-accent) 45%, white);
+
+            /* 中性色令牌，浅色为默认值。 */
+            --bdl-surface: #ffffff;
+            --bdl-surface-sub: #fafafa;
+            --bdl-surface-raise: #ffffff;
+            --bdl-border: #e8e8e8;
+            --bdl-border-soft: #f0f0f0;
+            --bdl-text: #333333;
+            --bdl-text-sub: #666666;
+            --bdl-text-weak: #999999;
+            --bdl-overlay: rgba(0, 0, 0, 0.18);
+            /* 完成动画的全屏底色，只取中性值：站点主色偏黑时染色会让整屏发脏。 */
+            --bdl-veil: rgba(255, 255, 255, 0.72);
+
+            /* 状态色令牌，浅色为默认值。文字色需与同组底色叠在 --bdl-surface 上
+               仍满足 4.5:1，故深浅两套各自给出，不由单侧值推算。 */
+            --bdl-info-bg: #e6f7ff;
+            --bdl-info-border: #91d5ff;
+            --bdl-info-text: #0050b3;
+            --bdl-success-bg: #f6ffed;
+            --bdl-success-border: #b7eb8f;
+            --bdl-success-text: #389e0d;
+            --bdl-warning-bg: #fffbe6;
+            --bdl-warning-border: #ffe58f;
+            --bdl-warning-text: #ad6800;
+            --bdl-danger-bg: #fff1f0;
+            --bdl-danger-border: #ffa39e;
+            --bdl-danger-text: #cf1322;
+
+            /* --bdl-brand-soft 底色上的文字色。深色面板下压暗的品牌色对比度不足，
+               改用提亮值。 */
+            --bdl-brand-on-soft: var(--bdl-brand-deep);
+        }
+
+        /* 深色站点的面板配色，由 applySurface() 在宿主元素上加 .bdl-dark 触发。 */
+        :host(.bdl-dark) {
+            color-scheme: dark;
+            --bdl-surface: #1c1c22;
+            --bdl-surface-sub: #16161b;
+            --bdl-surface-raise: #26262d;
+            --bdl-border: #34343d;
+            --bdl-border-soft: #2a2a32;
+            --bdl-text: #f5f5f5;
+            --bdl-text-sub: #b8b8c0;
+            --bdl-text-weak: #85858f;
+            --bdl-overlay: rgba(0, 0, 0, 0.55);
+            --bdl-veil: rgba(10, 10, 14, 0.66);
+            --bdl-info-bg: rgba(56, 139, 253, 0.16);
+            --bdl-info-border: rgba(56, 139, 253, 0.42);
+            --bdl-info-text: #79c0ff;
+            --bdl-success-bg: rgba(63, 185, 80, 0.16);
+            --bdl-success-border: rgba(63, 185, 80, 0.42);
+            --bdl-success-text: #56d364;
+            --bdl-warning-bg: rgba(227, 179, 65, 0.16);
+            --bdl-warning-border: rgba(227, 179, 65, 0.42);
+            --bdl-warning-text: #e3b341;
+            --bdl-danger-bg: rgba(248, 81, 73, 0.16);
+            --bdl-danger-border: rgba(248, 81, 73, 0.45);
+            --bdl-danger-text: #ff7b72;
+            --bdl-brand-on-soft: color-mix(in srgb, var(--bdl-brand) 55%, white);
         }
 
         :host,
@@ -37,10 +112,10 @@ export const STYLES = `
             width: 60px;
             height: 60px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #00a1d6 0%, #0081b3 100%);
+            background: linear-gradient(135deg, var(--bdl-brand-accent) 0%, var(--bdl-brand-accent-deep) 100%);
             border: none;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0, 161, 214, 0.5);
+            box-shadow: 0 4px 15px color-mix(in srgb, var(--bdl-brand-accent) 50%, transparent);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -51,7 +126,7 @@ export const STYLES = `
 
         #bdl-main-btn:hover {
             transform: scale(1.08) translateY(-2px);
-            box-shadow: 0 6px 25px rgba(0, 161, 214, 0.6);
+            box-shadow: 0 6px 25px color-mix(in srgb, var(--bdl-brand-accent) 60%, transparent);
         }
 
         #bdl-main-btn:active {
@@ -80,12 +155,12 @@ export const STYLES = `
             bottom: 0;
             left: 0;
             width: 100%;
-            background: linear-gradient(180deg, #fb7299 0%, #f25d8e 100%);
+            background: linear-gradient(180deg, var(--bdl-brand) 0%, var(--bdl-brand-deep) 100%);
             transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             height: 0%;
             border-radius: 0 0 30px 30px;
             overflow: hidden;
-            box-shadow: 0 -2px 10px rgba(251, 114, 153, 0.3) inset;
+            box-shadow: 0 -2px 10px color-mix(in srgb, var(--bdl-brand) 30%, transparent) inset;
         }
 
         #bdl-progress-circle::before {
@@ -181,9 +256,9 @@ export const STYLES = `
             bottom: 75px;
             right: 0;
             width: 420px;
-            background: #fff;
+            background: var(--bdl-surface);
             border-radius: 16px;
-            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 10px 50px var(--bdl-overlay);
             display: none;
             overflow: hidden;
         }
@@ -210,8 +285,8 @@ export const STYLES = `
         }
 
         .bdl-header {
-            background: linear-gradient(135deg, #00a1d6 0%, #0081b3 100%);
-            color: white;
+            background: linear-gradient(135deg, var(--bdl-brand-accent) 0%, var(--bdl-brand-accent-deep) 100%);
+            color: var(--bdl-brand-contrast);
             padding: 18px 20px;
             display: flex;
             justify-content: space-between;
@@ -253,7 +328,7 @@ export const STYLES = `
         }
 
         .bdl-info-card {
-            background: #f8f9fa;
+            background: var(--bdl-surface-sub);
             border-radius: 12px;
             padding: 15px;
             margin-bottom: 18px;
@@ -262,7 +337,7 @@ export const STYLES = `
         .bdl-info-title {
             font-size: 15px;
             font-weight: 600;
-            color: #333;
+            color: var(--bdl-text);
             margin-bottom: 10px;
             line-height: 1.5;
             display: -webkit-box;
@@ -275,7 +350,7 @@ export const STYLES = `
             display: flex;
             gap: 15px;
             font-size: 13px;
-            color: #666;
+            color: var(--bdl-text-sub);
         }
 
         .bdl-info-meta-item {
@@ -294,18 +369,18 @@ export const STYLES = `
         }
 
         .bdl-vip-badge.guest {
-            background: #ccc;
-            color: #666;
+            background: var(--bdl-border);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-vip-badge.normal {
-            background: #ff9eb5;
-            color: white;
+            background: var(--bdl-brand-light);
+            color: var(--bdl-brand-contrast);
         }
 
         .bdl-vip-badge.vip {
-            background: #fb7299;
-            color: white;
+            background: var(--bdl-brand);
+            color: var(--bdl-brand-contrast);
         }
 
         .bdl-section {
@@ -322,16 +397,16 @@ export const STYLES = `
         .bdl-section-title {
             font-size: 14px;
             font-weight: 600;
-            color: #444;
+            color: var(--bdl-text);
         }
 
         .bdl-pages-container {
             max-height: 200px;
             overflow-y: auto;
-            border: 1px solid #e8e8e8;
+            border: 1px solid var(--bdl-border);
             border-radius: 10px;
             padding: 10px;
-            background: #fafafa;
+            background: var(--bdl-surface-sub);
         }
 
         .bdl-page-item {
@@ -339,11 +414,11 @@ export const STYLES = `
             align-items: center;
             padding: 10px;
             margin-bottom: 8px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.2s;
-            background: white;
+            background: var(--bdl-surface-raise);
         }
 
         .bdl-page-item:last-child {
@@ -351,12 +426,12 @@ export const STYLES = `
         }
 
         .bdl-page-item:hover {
-            border-color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
         }
 
         .bdl-page-item.active {
-            border-color: #00a1d6;
-            background: linear-gradient(135deg, rgba(0,161,214,0.08) 0%, rgba(0,129,179,0.08) 100%);
+            border-color: var(--bdl-brand-accent);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--bdl-brand-accent) 8%, transparent) 0%, color-mix(in srgb, var(--bdl-brand-accent-deep) 8%, transparent) 100%);
         }
 
         .bdl-page-checkbox {
@@ -364,7 +439,7 @@ export const STYLES = `
             height: 18px;
             margin-right: 12px;
             cursor: pointer;
-            accent-color: #00a1d6;
+            accent-color: var(--bdl-brand-accent);
         }
 
         .bdl-page-info {
@@ -374,13 +449,13 @@ export const STYLES = `
 
         .bdl-page-num {
             font-size: 12px;
-            color: #999;
+            color: var(--bdl-text-weak);
             margin-bottom: 3px;
         }
 
         .bdl-page-title {
             font-size: 13px;
-            color: #333;
+            color: var(--bdl-text);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -388,7 +463,7 @@ export const STYLES = `
 
         .bdl-page-duration {
             font-size: 12px;
-            color: #999;
+            color: var(--bdl-text-weak);
             margin-left: 10px;
         }
 
@@ -400,16 +475,100 @@ export const STYLES = `
             display: block;
         }
 
+        .bdl-short-items-toolbar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .bdl-short-select-btn {
+            flex: 1;
+            height: 28px;
+            border: 1px solid var(--bdl-border);
+            border-radius: 8px;
+            background: var(--bdl-surface-raise);
+            color: var(--bdl-text-sub);
+            font-size: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .bdl-short-select-btn:hover {
+            border-color: var(--bdl-brand-accent);
+            color: var(--bdl-brand-accent);
+        }
+
         .bdl-short-items {
-            max-height: 180px;
+            max-height: 240px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 8px;
             padding: 10px;
-            border: 1px solid #e8e8e8;
+            border: 1px solid var(--bdl-border);
             border-radius: 10px;
-            background: #fafafa;
+            background: var(--bdl-surface-sub);
+        }
+
+        .bdl-short-item-row {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .bdl-short-assets {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+            gap: 6px;
+            padding: 8px;
+            border: 1px solid var(--bdl-border);
+            border-radius: 8px;
+            background: var(--bdl-surface-raise);
+        }
+
+        .bdl-short-asset {
+            position: relative;
+            display: block;
+            width: 100%;
+            aspect-ratio: 1;
+            padding: 0;
+            border: 2px solid var(--bdl-border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bdl-surface-sub);
+            font-family: inherit;
+            cursor: pointer;
+            opacity: 0.5;
+            transition: opacity 0.2s, border-color 0.2s;
+        }
+
+        .bdl-short-asset:hover {
+            opacity: 0.8;
+        }
+
+        .bdl-short-asset.selected {
+            border-color: var(--bdl-brand-accent);
+            opacity: 1;
+        }
+
+        .bdl-short-asset-thumb {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .bdl-short-asset-index {
+            position: absolute;
+            right: 3px;
+            bottom: 3px;
+            padding: 0 4px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #fff;
+            font-size: 10px;
+            line-height: 14px;
         }
 
         .bdl-short-item {
@@ -419,23 +578,34 @@ export const STYLES = `
             align-items: center;
             gap: 10px;
             padding: 10px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 10px;
-            background: #fff;
-            color: #333;
+            background: var(--bdl-surface-raise);
+            color: var(--bdl-text);
             cursor: pointer;
             text-align: left;
             transition: all 0.2s;
         }
 
         .bdl-short-item:hover {
-            border-color: #00a1d6;
-            color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
+            color: var(--bdl-brand-accent);
         }
 
-        .bdl-short-item.active {
-            border-color: #00a1d6;
-            background: linear-gradient(135deg, rgba(0,161,214,0.08) 0%, rgba(0,129,179,0.08) 100%);
+        .bdl-short-item.selected {
+            border-color: var(--bdl-brand-accent);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--bdl-brand-accent) 8%, transparent) 0%, color-mix(in srgb, var(--bdl-brand-accent-deep) 8%, transparent) 100%);
+        }
+
+        /* 图集内只选了一部分：虚线外框区别于整项选中 */
+        .bdl-short-item.partial {
+            border-style: dashed;
+            border-color: var(--bdl-brand-accent);
+        }
+
+        /* 信息区当前展示的媒体项 */
+        .bdl-short-item.previewing {
+            box-shadow: inset 3px 0 0 var(--bdl-brand-accent-deep);
         }
 
         .bdl-short-item-mark {
@@ -447,8 +617,8 @@ export const STYLES = `
             height: 24px;
             padding: 0 8px;
             border-radius: 999px;
-            background: rgba(0, 161, 214, 0.1);
-            color: #0081b3;
+            background: color-mix(in srgb, var(--bdl-brand-accent) 10%, transparent);
+            color: var(--bdl-brand-accent-deep);
             font-size: 11px;
             font-weight: 600;
         }
@@ -462,6 +632,18 @@ export const STYLES = `
             font-size: 13px;
         }
 
+        /* 同一作品的多路清晰度标题相同，靠右侧标识区分 */
+        .bdl-short-item-label {
+            flex: 0 0 auto;
+            max-width: 45%;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            color: var(--bdl-text-weak);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
         .bdl-pages-actions {
             display: flex;
             gap: 10px;
@@ -471,18 +653,18 @@ export const STYLES = `
         .bdl-pages-actions button {
             flex: 1;
             padding: 8px;
-            border: 1px solid #00a1d6;
+            border: 1px solid var(--bdl-brand-accent);
             border-radius: 6px;
-            background: white;
-            color: #00a1d6;
+            background: var(--bdl-surface-raise);
+            color: var(--bdl-brand-accent);
             font-size: 12px;
             cursor: pointer;
             transition: all 0.2s;
         }
 
         .bdl-pages-actions button:hover {
-            background: #00a1d6;
-            color: white;
+            background: var(--bdl-brand-accent);
+            color: var(--bdl-brand-contrast);
         }
 
         .bdl-quality-grid {
@@ -493,25 +675,25 @@ export const STYLES = `
 
         .bdl-quality-btn {
             padding: 10px 8px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 10px;
-            background: white;
+            background: var(--bdl-surface-raise);
             font-size: 12px;
             cursor: pointer;
             transition: all 0.2s;
             text-align: center;
-            color: #555;
+            color: var(--bdl-text-sub);
         }
 
         .bdl-quality-btn:hover {
-            border-color: #00a1d6;
-            color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
+            color: var(--bdl-brand-accent);
         }
 
         .bdl-quality-btn.active {
-            border-color: #00a1d6;
-            background: #00a1d6;
-            color: white;
+            border-color: var(--bdl-brand-accent);
+            background: var(--bdl-brand-accent);
+            color: var(--bdl-brand-contrast);
         }
 
         .bdl-quality-btn.disabled {
@@ -537,28 +719,28 @@ export const STYLES = `
 
         .bdl-codec-label {
             font-size: 12px;
-            color: #666;
+            color: var(--bdl-text-sub);
             font-weight: 500;
         }
 
         .bdl-codec-select {
             padding: 8px 10px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 8px;
-            background: white;
+            background: var(--bdl-surface-raise);
             font-size: 13px;
-            color: #333;
+            color: var(--bdl-text);
             cursor: pointer;
             transition: all 0.2s;
         }
 
         .bdl-codec-select:hover {
-            border-color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
         }
 
         .bdl-codec-select:focus {
             outline: none;
-            border-color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
         }
 
         .bdl-method-list {
@@ -571,26 +753,26 @@ export const STYLES = `
             display: flex;
             align-items: center;
             padding: 12px 15px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 12px;
             cursor: pointer;
             transition: all 0.2s;
-            background: white;
+            background: var(--bdl-surface-raise);
         }
 
         .bdl-method-item:hover {
-            border-color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
         }
 
         .bdl-method-item.active {
-            border-color: #00a1d6;
-            background: linear-gradient(135deg, rgba(0,161,214,0.08) 0%, rgba(0,129,179,0.08) 100%);
+            border-color: var(--bdl-brand-accent);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--bdl-brand-accent) 8%, transparent) 0%, color-mix(in srgb, var(--bdl-brand-accent-deep) 8%, transparent) 100%);
         }
 
         .bdl-method-radio {
             width: 20px;
             height: 20px;
-            border: 2px solid #ccc;
+            border: 2px solid var(--bdl-border);
             border-radius: 50%;
             margin-right: 12px;
             display: flex;
@@ -600,14 +782,14 @@ export const STYLES = `
         }
 
         .bdl-method-item.active .bdl-method-radio {
-            border-color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
         }
 
         .bdl-method-item.active .bdl-method-radio::after {
             content: '';
             width: 10px;
             height: 10px;
-            background: #00a1d6;
+            background: var(--bdl-brand-accent);
             border-radius: 50%;
         }
 
@@ -618,7 +800,7 @@ export const STYLES = `
         .bdl-method-name {
             font-size: 14px;
             font-weight: 600;
-            color: #333;
+            color: var(--bdl-text);
             margin-bottom: 3px;
             display: flex;
             align-items: center;
@@ -627,7 +809,7 @@ export const STYLES = `
 
         .bdl-method-desc {
             font-size: 12px;
-            color: #888;
+            color: var(--bdl-text-weak);
         }
 
         .bdl-method-status {
@@ -638,13 +820,13 @@ export const STYLES = `
         }
 
         .bdl-method-status.ready {
-            background: #d4edda;
-            color: #155724;
+            background: color-mix(in srgb, var(--bdl-success-text) 14%, transparent);
+            color: var(--bdl-success-text);
         }
 
         .bdl-method-status.loading {
-            background: #fff3cd;
-            color: #856404;
+            background: color-mix(in srgb, var(--bdl-warning-text) 16%, transparent);
+            color: var(--bdl-warning-text);
         }
 
         .bdl-extra-downloads {
@@ -658,9 +840,9 @@ export const STYLES = `
             flex: 1;
             min-width: calc(50% - 4px);
             padding: 10px;
-            border: 2px solid #e8e8e8;
+            border: 2px solid var(--bdl-border);
             border-radius: 8px;
-            background: white;
+            background: var(--bdl-surface-raise);
             font-size: 12px;
             cursor: pointer;
             transition: all 0.2s;
@@ -671,12 +853,12 @@ export const STYLES = `
         }
 
         .bdl-extra-btn:hover {
-            border-color: #00a1d6;
-            color: #00a1d6;
+            border-color: var(--bdl-brand-accent);
+            color: var(--bdl-brand-accent);
         }
 
         .bdl-progress-section {
-            background: #f8f9fa;
+            background: var(--bdl-surface-sub);
             border-radius: 12px;
             padding: 15px;
             margin-bottom: 18px;
@@ -704,17 +886,17 @@ export const STYLES = `
         }
 
         .bdl-progress-label {
-            color: #555;
+            color: var(--bdl-text-sub);
             font-weight: 500;
         }
 
         .bdl-progress-value {
-            color: #888;
+            color: var(--bdl-text-weak);
         }
 
         .bdl-progress-track {
             height: 10px;
-            background: #e0e0e0;
+            background: var(--bdl-surface-sub);
             border-radius: 5px;
             overflow: hidden;
             position: relative;
@@ -727,7 +909,7 @@ export const STYLES = `
             width: 0%;
             position: relative;
             overflow: hidden;
-            background: linear-gradient(90deg, #fb7299, #ff9eb5);
+            background: linear-gradient(90deg, var(--bdl-brand), var(--bdl-brand-light));
         }
 
         .bdl-progress-bar::before {
@@ -768,15 +950,15 @@ export const STYLES = `
         }
 
         .bdl-progress-bar.video {
-            background: linear-gradient(90deg, #fb7299, #ff9eb5);
+            background: linear-gradient(90deg, var(--bdl-brand), var(--bdl-brand-light));
         }
 
         .bdl-progress-bar.audio {
-            background: linear-gradient(90deg, #00a1d6, #66d4ff);
+            background: linear-gradient(90deg, var(--bdl-brand-accent), var(--bdl-brand-accent-light));
         }
 
         .bdl-progress-bar.merge {
-            background: linear-gradient(90deg, #fb7299, #00a1d6);
+            background: linear-gradient(90deg, var(--bdl-brand), var(--bdl-brand-accent));
         }
 
         .bdl-alert {
@@ -793,27 +975,27 @@ export const STYLES = `
         }
 
         .bdl-alert.info {
-            background: #e6f7ff;
-            border: 1px solid #91d5ff;
-            color: #0050b3;
+            background: var(--bdl-info-bg);
+            border: 1px solid var(--bdl-info-border);
+            color: var(--bdl-info-text);
         }
 
         .bdl-alert.success {
-            background: #fff0f6;
-            border: 1px solid #ffadd2;
-            color: #c41d7f;
+            background: var(--bdl-success-bg);
+            border: 1px solid var(--bdl-success-border);
+            color: var(--bdl-success-text);
         }
 
         .bdl-alert.warning {
-            background: #fffbe6;
-            border: 1px solid #ffe58f;
-            color: #ad6800;
+            background: var(--bdl-warning-bg);
+            border: 1px solid var(--bdl-warning-border);
+            color: var(--bdl-warning-text);
         }
 
         .bdl-alert.error {
-            background: #fff1f0;
-            border: 1px solid #ffa39e;
-            color: #cf1322;
+            background: var(--bdl-danger-bg);
+            border: 1px solid var(--bdl-danger-border);
+            color: var(--bdl-danger-text);
         }
 
         .bdl-download-btn {
@@ -825,8 +1007,8 @@ export const STYLES = `
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            background: linear-gradient(135deg, #00a1d6 0%, #0081b3 100%);
-            color: white;
+            background: linear-gradient(135deg, var(--bdl-brand-accent) 0%, var(--bdl-brand-accent-deep) 100%);
+            color: var(--bdl-brand-contrast);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -858,11 +1040,11 @@ export const STYLES = `
 
         .bdl-download-btn:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(0, 161, 214, 0.4);
+            box-shadow: 0 5px 20px color-mix(in srgb, var(--bdl-brand-accent) 40%, transparent);
         }
 
         .bdl-download-btn:disabled {
-            background: linear-gradient(135deg, #ccc 0%, #aaa 100%);
+            background: linear-gradient(135deg, var(--bdl-border) 0%, var(--bdl-text-weak) 100%);
             cursor: not-allowed;
             transform: none;
         }
@@ -870,9 +1052,9 @@ export const STYLES = `
         .bdl-footer {
             text-align: center;
             padding: 15px 20px;
-            background: #f8f9fa;
+            background: var(--bdl-surface-sub);
             font-size: 12px;
-            color: #999;
+            color: var(--bdl-text-weak);
             line-height: 1.6;
             cursor: pointer;
             user-select: none;
@@ -880,18 +1062,18 @@ export const STYLES = `
         }
 
         .bdl-footer:hover {
-            background: #f0f1f2;
-            color: #666;
+            background: var(--bdl-surface-sub);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-tips {
-            background: #fffbe6;
-            border: 1px solid #ffe58f;
+            background: var(--bdl-warning-bg);
+            border: 1px solid var(--bdl-warning-border);
             border-radius: 10px;
             padding: 12px 15px;
             margin-bottom: 18px;
             font-size: 12px;
-            color: #ad6800;
+            color: var(--bdl-warning-text);
             line-height: 1.6;
         }
 
@@ -907,7 +1089,7 @@ export const STYLES = `
             display: inline-block;
             width: 14px;
             height: 14px;
-            border: 2px solid #fff;
+            border: 2px solid var(--bdl-brand-contrast);
             border-radius: 50%;
             border-top-color: transparent;
             animation: bdlSpin 0.8s linear infinite;
@@ -936,7 +1118,7 @@ export const STYLES = `
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(circle at center, rgba(251, 114, 153, 0.15) 0%, rgba(0, 161, 214, 0.15) 100%);
+            background: var(--bdl-veil);
             backdrop-filter: blur(8px);
             z-index: 100001;
             display: flex;
@@ -966,25 +1148,24 @@ export const STYLES = `
         .bdl-complete-icon {
             width: 140px;
             height: 140px;
-            background: linear-gradient(135deg, #fb7299 0%, #f25d8e 50%, #00a1d6 100%);
+            background: var(--bdl-brand);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             animation: bdlIconPop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            box-shadow: 
-                0 20px 60px rgba(251, 114, 153, 0.4),
-                0 0 0 0 rgba(251, 114, 153, 0.4);
+            box-shadow: 0 12px 32px color-mix(in srgb, var(--bdl-brand) 24%, transparent);
             position: relative;
             z-index: 2;
         }
 
+        /* 单色描边环，靠缩放与透明度做呼吸感，不叠第二种颜色。 */
         .bdl-complete-icon::before {
             content: '';
             position: absolute;
-            inset: 0;
+            inset: -10px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #fb7299 0%, #00a1d6 100%);
+            border: 2px solid color-mix(in srgb, var(--bdl-brand) 34%, transparent);
             animation: bdlIconPulse 2s ease-in-out infinite;
             z-index: -1;
         }
@@ -1005,10 +1186,12 @@ export const STYLES = `
 
         @keyframes bdlIconPulse {
             0%, 100% {
-                box-shadow: 0 0 0 0 rgba(251, 114, 153, 0.7);
+                transform: scale(1);
+                opacity: 0.9;
             }
             50% {
-                box-shadow: 0 0 0 30px rgba(251, 114, 153, 0);
+                transform: scale(1.12);
+                opacity: 0.2;
             }
         }
 
@@ -1016,11 +1199,10 @@ export const STYLES = `
             width: 80px;
             height: 80px;
             fill: none;
-            stroke: white;
+            stroke: var(--bdl-brand-contrast);
             stroke-width: 5;
             stroke-linecap: round;
             stroke-linejoin: round;
-            filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.2));
         }
 
         .bdl-complete-icon svg path {
@@ -1043,18 +1225,18 @@ export const STYLES = `
             height: 140px;
             margin: -70px 0 0 -70px;
             border-radius: 50%;
-            border: 3px solid #fb7299;
+            border: 2px solid color-mix(in srgb, var(--bdl-brand) 40%, transparent);
             animation: bdlRippleOut 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
             z-index: 1;
         }
 
         .bdl-complete-ripple:nth-child(2) {
-            border-color: #00a1d6;
+            border-color: color-mix(in srgb, var(--bdl-brand-spark) 40%, transparent);
             animation-delay: 0.15s;
         }
 
         .bdl-complete-ripple:nth-child(3) {
-            border-color: #fb7299;
+            border-color: color-mix(in srgb, var(--bdl-brand) 24%, transparent);
             animation-delay: 0.3s;
         }
 
@@ -1081,7 +1263,45 @@ export const STYLES = `
         .bdl-particle {
             position: absolute;
             border-radius: 50%;
+            background: var(--bdl-brand);
             animation: bdlParticleFly 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        .bdl-particle.is-light {
+            background: var(--bdl-brand-light);
+        }
+
+        .bdl-particle.is-spark {
+            background: var(--bdl-brand-spark);
+        }
+
+        /* 深色底上主色为黑的站点（X 暗色主题）粒子会看不见，改用前景色一族。 */
+        :host(.bdl-dark) .bdl-particle {
+            background: var(--bdl-brand-contrast);
+        }
+
+        :host(.bdl-dark) .bdl-particle.is-light {
+            background: color-mix(in srgb, var(--bdl-brand-contrast) 55%, transparent);
+        }
+
+        :host(.bdl-dark) .bdl-particle.is-spark {
+            background: var(--bdl-brand-spark);
+        }
+
+        /* 主色为黑的站点在深色底上圆盘与底色几乎同色，靠一圈前景色描边界定形状。 */
+        :host(.bdl-dark) .bdl-complete-icon {
+            box-shadow:
+                0 12px 32px rgba(0, 0, 0, 0.45),
+                0 0 0 2px color-mix(in srgb, var(--bdl-brand-contrast) 45%, transparent);
+        }
+
+        :host(.bdl-dark) .bdl-complete-icon::before {
+            border-color: color-mix(in srgb, var(--bdl-brand-contrast) 32%, transparent);
+        }
+
+        :host(.bdl-dark) .bdl-complete-ripple,
+        :host(.bdl-dark) .bdl-complete-ripple:nth-child(3) {
+            border-color: color-mix(in srgb, var(--bdl-brand-contrast) 26%, transparent);
         }
 
         @keyframes bdlParticleFly {
@@ -1102,11 +1322,7 @@ export const STYLES = `
             transform: translateX(-50%);
             font-size: 24px;
             font-weight: 700;
-            background: linear-gradient(135deg, #fb7299 0%, #00a1d6 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            text-shadow: 0 2px 20px rgba(251, 114, 153, 0.3);
+            color: var(--bdl-text);
             animation: bdlTextFade 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.5s both;
             white-space: nowrap;
             letter-spacing: 2px;
@@ -1137,7 +1353,7 @@ export const STYLES = `
             position: absolute;
             width: 6px;
             height: 6px;
-            background: linear-gradient(135deg, #fb7299, #00a1d6);
+            background: var(--bdl-brand-spark);
             clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
             animation: bdlSparkle 1.5s ease-in-out infinite;
             opacity: 0;
@@ -1186,18 +1402,10 @@ export const STYLES = `
             margin-bottom: 18px;
         }
 
+        /* 中性色令牌统一声明在 :host，此处不再重复声明，
+           否则会遮蔽 :host(.bdl-dark) 的深色取值。 */
         #bdl-panel,
         #bdl-entry {
-            --bdl-brand: #fb7299;
-            --bdl-brand-deep: #e85f8c;
-            --bdl-brand-soft: rgba(251, 114, 153, 0.12);
-            --bdl-border: rgba(24, 25, 28, 0.08);
-            --bdl-border-strong: rgba(24, 25, 28, 0.12);
-            --bdl-text: #18191c;
-            --bdl-subtext: #61666d;
-            --bdl-soft-text: #9499a0;
-            --bdl-surface: #f6f7f8;
-            --bdl-surface-strong: #f1f2f3;
             font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
         }
 
@@ -1205,7 +1413,6 @@ export const STYLES = `
             display: none;
             flex: none;
             position: relative;
-            margin-right: 16px;
         }
 
         #bdl-entry[data-mounted="true"] {
@@ -1258,7 +1465,7 @@ export const STYLES = `
             align-items: center;
             justify-content: center;
             gap: 6px;
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
             font-size: 13px;
             font-weight: 500;
             overflow: hidden;
@@ -1269,9 +1476,8 @@ export const STYLES = `
             padding: 0 12px 0 8px;
         }
 
-        /* 浮动按钮：做成克制的深色半透明胶囊，默认低透明度，
-           hover 才完全显现。目的是「在场但不抢戏」——
-           短视频站点多为深色界面，粉色渐变按钮会非常突兀。 */
+        /* 浮动按钮：深色半透明胶囊，默认低透明度，hover 才完全显现。
+           短视频站点多为深色界面，故不使用品牌色渐变。 */
         #bdl-entry[data-mode="floating"] #bdl-main-btn {
             min-width: 88px;
             height: 40px;
@@ -1294,7 +1500,7 @@ export const STYLES = `
             opacity: 1;
         }
 
-        /* 下载进行中必须清晰可见，不再压低透明度 */
+        /* 下载中与面板展开时保持完全不透明 */
         #bdl-entry[data-mode="floating"].is-downloading #bdl-main-btn,
         #bdl-entry[data-mode="floating"] #bdl-main-btn[aria-expanded="true"] {
             opacity: 1;
@@ -1307,7 +1513,7 @@ export const STYLES = `
             box-shadow: none;
             color: var(--bdl-brand);
             background: var(--bdl-brand-soft);
-            border-color: rgba(251, 114, 153, 0.2);
+            border-color: color-mix(in srgb, var(--bdl-brand) 20%, transparent);
         }
 
         #bdl-main-btn:active {
@@ -1317,7 +1523,7 @@ export const STYLES = `
         #bdl-main-btn[aria-expanded="true"] {
             color: var(--bdl-brand);
             background: var(--bdl-brand-soft);
-            border-color: rgba(251, 114, 153, 0.22);
+            border-color: color-mix(in srgb, var(--bdl-brand) 22%, transparent);
         }
 
         #bdl-main-btn:disabled {
@@ -1354,7 +1560,7 @@ export const STYLES = `
             background: var(--bdl-skin-bg, transparent);
             border: none;
             box-shadow: none;
-            /* 继承站点字体，避免字形不一致露馅 */
+            /* 继承站点字体，与相邻原生按钮字形一致 */
             font-family: inherit;
             white-space: nowrap;
         }
@@ -1389,7 +1595,7 @@ export const STYLES = `
             inset: auto 0 0;
             height: 2px;
             border-radius: 0;
-            background: var(--bdl-skin-color-hover, #00aeec);
+            background: var(--bdl-skin-color-hover, var(--bdl-brand-accent));
             opacity: 0;
             transition: opacity 0.2s ease, width 0.3s ease;
         }
@@ -1462,8 +1668,8 @@ export const STYLES = `
             max-height: min(78vh, 760px);
             border-radius: 18px;
             border: 1px solid var(--bdl-border);
-            background: #fff;
-            box-shadow: 0 24px 56px rgba(0, 0, 0, 0.18);
+            background: var(--bdl-surface);
+            box-shadow: 0 24px 56px var(--bdl-overlay);
             overflow: hidden;
             display: none;
             transform-origin: top right;
@@ -1483,7 +1689,7 @@ export const STYLES = `
         }
 
         .bdl-header {
-            background: linear-gradient(180deg, rgba(251, 114, 153, 0.12) 0%, rgba(251, 114, 153, 0.04) 100%);
+            background: linear-gradient(180deg, color-mix(in srgb, var(--bdl-brand) 12%, transparent) 0%, color-mix(in srgb, var(--bdl-brand) 4%, transparent) 100%);
             color: var(--bdl-text);
             border-bottom: 1px solid var(--bdl-border);
             padding: 16px 18px 14px;
@@ -1506,13 +1712,13 @@ export const STYLES = `
         .bdl-close {
             width: 30px;
             height: 30px;
-            background: rgba(24, 25, 28, 0.05);
-            color: var(--bdl-subtext);
+            background: color-mix(in srgb, var(--bdl-text) 8%, transparent);
+            color: var(--bdl-text-sub);
             border-radius: 50%;
         }
 
         .bdl-close:hover {
-            background: rgba(251, 114, 153, 0.12);
+            background: color-mix(in srgb, var(--bdl-brand) 12%, transparent);
             color: var(--bdl-brand);
             transform: none;
         }
@@ -1521,7 +1727,7 @@ export const STYLES = `
             padding: 16px 18px 18px;
             max-height: min(70vh, 660px);
             overflow-y: auto;
-            background: #fff;
+            background: var(--bdl-surface);
         }
 
         .bdl-body::-webkit-scrollbar,
@@ -1531,12 +1737,12 @@ export const STYLES = `
 
         .bdl-body::-webkit-scrollbar-thumb,
         .bdl-pages-container::-webkit-scrollbar-thumb {
-            background: rgba(24, 25, 28, 0.14);
+            background: var(--bdl-border);
             border-radius: 999px;
         }
 
         .bdl-info-card {
-            background: linear-gradient(180deg, #fff 0%, #fafbfc 100%);
+            background: linear-gradient(180deg, var(--bdl-surface-raise) 0%, var(--bdl-surface-sub) 100%);
             border: 1px solid var(--bdl-border);
             border-radius: 16px;
             padding: 14px 14px 12px;
@@ -1555,14 +1761,14 @@ export const STYLES = `
             flex-wrap: wrap;
             gap: 8px;
             font-size: 12px;
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-info-meta-item {
             gap: 6px;
             padding: 6px 10px;
             border-radius: 999px;
-            background: #fff;
+            background: var(--bdl-surface-raise);
             border: 1px solid var(--bdl-border);
         }
 
@@ -1574,8 +1780,8 @@ export const STYLES = `
             height: 20px;
             padding: 0 6px;
             border-radius: 999px;
-            background: rgba(251, 114, 153, 0.12);
-            color: var(--bdl-brand-deep);
+            background: color-mix(in srgb, var(--bdl-brand) 12%, transparent);
+            color: var(--bdl-brand-on-soft);
             font-size: 11px;
             font-weight: 600;
             line-height: 20px;
@@ -1590,8 +1796,8 @@ export const STYLES = `
         }
 
         .bdl-vip-badge.site {
-            background: rgba(251, 114, 153, 0.12);
-            color: var(--bdl-brand-deep);
+            background: color-mix(in srgb, var(--bdl-brand) 12%, transparent);
+            color: var(--bdl-brand-on-soft);
         }
 
         .bdl-section {
@@ -1610,7 +1816,7 @@ export const STYLES = `
 
         .bdl-section-count {
             font-size: 12px;
-            color: var(--bdl-soft-text);
+            color: var(--bdl-text-weak);
         }
 
         .bdl-pages-container {
@@ -1618,7 +1824,7 @@ export const STYLES = `
             padding: 10px;
             border: 1px solid var(--bdl-border);
             border-radius: 14px;
-            background: var(--bdl-surface);
+            background: var(--bdl-surface-sub);
         }
 
         .bdl-page-item {
@@ -1626,17 +1832,17 @@ export const STYLES = `
             margin-bottom: 8px;
             border: 1px solid transparent;
             border-radius: 12px;
-            background: #fff;
+            background: var(--bdl-surface-raise);
         }
 
         .bdl-page-item:hover {
-            border-color: rgba(251, 114, 153, 0.24);
-            background: rgba(251, 114, 153, 0.04);
+            border-color: color-mix(in srgb, var(--bdl-brand) 24%, transparent);
+            background: color-mix(in srgb, var(--bdl-brand) 4%, transparent);
         }
 
         .bdl-page-item.active {
-            border-color: rgba(251, 114, 153, 0.28);
-            background: rgba(251, 114, 153, 0.08);
+            border-color: color-mix(in srgb, var(--bdl-brand) 28%, transparent);
+            background: color-mix(in srgb, var(--bdl-brand) 8%, transparent);
         }
 
         .bdl-page-checkbox {
@@ -1645,7 +1851,7 @@ export const STYLES = `
 
         .bdl-page-num,
         .bdl-page-duration {
-            color: var(--bdl-soft-text);
+            color: var(--bdl-text-weak);
         }
 
         .bdl-page-title {
@@ -1663,20 +1869,20 @@ export const STYLES = `
         .bdl-codec-select {
             border-radius: 12px;
             border: 1px solid var(--bdl-border);
-            background: #fff;
-            color: var(--bdl-subtext);
+            background: var(--bdl-surface-raise);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-pages-actions button {
             padding: 9px 8px;
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-pages-actions button:hover,
         .bdl-quality-btn:hover,
         .bdl-extra-btn:hover {
             background: var(--bdl-brand-soft);
-            border-color: rgba(251, 114, 153, 0.24);
+            border-color: color-mix(in srgb, var(--bdl-brand) 24%, transparent);
             color: var(--bdl-brand);
         }
 
@@ -1687,17 +1893,17 @@ export const STYLES = `
         .bdl-quality-btn {
             min-height: 40px;
             border-width: 1px;
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-quality-btn.active {
             border-color: transparent;
             background: var(--bdl-brand);
-            color: #fff;
+            color: var(--bdl-brand-contrast);
         }
 
         .bdl-codec-label {
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-codec-select {
@@ -1708,23 +1914,23 @@ export const STYLES = `
 
         .bdl-codec-select:hover,
         .bdl-codec-select:focus {
-            border-color: rgba(251, 114, 153, 0.24);
+            border-color: color-mix(in srgb, var(--bdl-brand) 24%, transparent);
         }
 
         .bdl-method-item {
             padding: 12px 14px;
             border-width: 1px;
             border-radius: 14px;
-            background: #fff;
+            background: var(--bdl-surface-raise);
         }
 
         .bdl-method-item:hover {
-            border-color: rgba(251, 114, 153, 0.24);
+            border-color: color-mix(in srgb, var(--bdl-brand) 24%, transparent);
         }
 
         .bdl-method-item.active {
-            border-color: rgba(251, 114, 153, 0.3);
-            background: rgba(251, 114, 153, 0.06);
+            border-color: color-mix(in srgb, var(--bdl-brand) 30%, transparent);
+            background: color-mix(in srgb, var(--bdl-brand) 6%, transparent);
         }
 
         .bdl-method-radio {
@@ -1745,17 +1951,17 @@ export const STYLES = `
         }
 
         .bdl-method-desc {
-            color: var(--bdl-soft-text);
+            color: var(--bdl-text-weak);
         }
 
         .bdl-method-status.ready {
-            background: rgba(35, 173, 100, 0.12);
-            color: #1f8a57;
+            background: color-mix(in srgb, var(--bdl-success-text) 14%, transparent);
+            color: var(--bdl-success-text);
         }
 
         .bdl-method-status.loading {
-            background: rgba(255, 184, 72, 0.16);
-            color: #b06f00;
+            background: color-mix(in srgb, var(--bdl-warning-text) 16%, transparent);
+            color: var(--bdl-warning-text);
         }
 
         .bdl-extra-downloads {
@@ -1779,7 +1985,7 @@ export const STYLES = `
             height: 22px;
             padding: 0 8px;
             border-radius: 999px;
-            background: rgba(251, 114, 153, 0.12);
+            background: color-mix(in srgb, var(--bdl-brand) 12%, transparent);
             color: var(--bdl-brand-deep);
             font-size: 11px;
             font-weight: 600;
@@ -1789,16 +1995,16 @@ export const STYLES = `
             padding: 14px;
             border: 1px solid var(--bdl-border);
             border-radius: 16px;
-            background: linear-gradient(180deg, #fff 0%, #fafbfc 100%);
+            background: linear-gradient(180deg, var(--bdl-surface-raise) 0%, var(--bdl-surface-sub) 100%);
             margin-bottom: 16px;
         }
 
         .bdl-progress-label {
-            color: var(--bdl-subtext);
+            color: var(--bdl-text-sub);
         }
 
         .bdl-progress-track {
-            background: rgba(24, 25, 28, 0.08);
+            background: var(--bdl-border);
         }
 
         .bdl-alert {
@@ -1809,26 +2015,26 @@ export const STYLES = `
         .bdl-download-btn {
             min-height: 46px;
             border-radius: 14px;
-            background: linear-gradient(180deg, #fb7299 0%, #f46290 100%);
-            box-shadow: 0 10px 24px rgba(251, 114, 153, 0.22);
+            background: linear-gradient(180deg, var(--bdl-brand) 0%, var(--bdl-brand-deep) 100%);
+            box-shadow: 0 10px 24px color-mix(in srgb, var(--bdl-brand) 22%, transparent);
         }
 
         .bdl-download-btn:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 12px 28px rgba(251, 114, 153, 0.28);
+            box-shadow: 0 12px 28px color-mix(in srgb, var(--bdl-brand) 28%, transparent);
         }
 
         .bdl-footer {
             padding: 12px 18px 16px;
-            background: #fff;
+            background: var(--bdl-surface);
             border-top: 1px solid var(--bdl-border);
-            color: var(--bdl-soft-text);
+            color: var(--bdl-text-weak);
             cursor: default;
         }
 
         .bdl-footer:hover {
-            background: #fff;
-            color: var(--bdl-soft-text);
+            background: var(--bdl-surface);
+            color: var(--bdl-text-weak);
         }
 
         .bdl-tips {
@@ -1838,7 +2044,7 @@ export const STYLES = `
 
         .bdl-tips-title {
             gap: 0;
-            color: #8a5a00;
+            color: var(--bdl-warning-text);
         }
 
         #bdl-pages-section,
@@ -1861,7 +2067,7 @@ export const STYLES = `
 
         .bdl-diag-trigger:hover {
             opacity: 1;
-            background: rgba(0, 0, 0, 0.05);
+            background: color-mix(in srgb, var(--bdl-text) 8%, transparent);
         }
 
         .bdl-diag-modal {
@@ -1885,9 +2091,9 @@ export const STYLES = `
         .bdl-diag-card {
             width: min(720px, calc(100vw - 32px));
             max-height: calc(100vh - 48px);
-            background: #fff;
+            background: var(--bdl-surface);
             border-radius: 16px;
-            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+            box-shadow: 0 24px 60px var(--bdl-overlay);
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -1899,14 +2105,14 @@ export const STYLES = `
             align-items: center;
             justify-content: space-between;
             padding: 14px 18px;
-            border-bottom: 1px solid #eef0f3;
-            background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
+            border-bottom: 1px solid var(--bdl-border-soft);
+            background: linear-gradient(180deg, var(--bdl-surface-sub) 0%, var(--bdl-surface) 100%);
         }
 
         .bdl-diag-title {
             font-size: 15px;
             font-weight: 600;
-            color: #1f2937;
+            color: var(--bdl-text);
         }
 
         .bdl-diag-close {
@@ -1914,15 +2120,15 @@ export const STYLES = `
             border: none;
             font-size: 22px;
             line-height: 1;
-            color: #6b7280;
+            color: var(--bdl-text-sub);
             cursor: pointer;
             padding: 4px 8px;
             border-radius: 8px;
         }
 
         .bdl-diag-close:hover {
-            background: rgba(0, 0, 0, 0.05);
-            color: #1f2937;
+            background: color-mix(in srgb, var(--bdl-text) 8%, transparent);
+            color: var(--bdl-text);
         }
 
         .bdl-diag-body {
@@ -1936,14 +2142,14 @@ export const STYLES = `
 
         .bdl-diag-desc {
             font-size: 12px;
-            color: #6b7280;
+            color: var(--bdl-text-sub);
             line-height: 1.6;
         }
 
         .bdl-diag-note-label {
             font-size: 12px;
             font-weight: 600;
-            color: #374151;
+            color: var(--bdl-text);
         }
 
         .bdl-diag-note {
@@ -1951,19 +2157,19 @@ export const STYLES = `
             min-height: 72px;
             resize: vertical;
             padding: 10px 12px;
-            border: 1px solid #d1d5db;
+            border: 1px solid var(--bdl-border);
             border-radius: 10px;
             font: inherit;
             font-size: 13px;
-            color: #111827;
-            background: #fff;
+            color: var(--bdl-text);
+            background: var(--bdl-surface-sub);
             outline: none;
             transition: border-color 0.15s, box-shadow 0.15s;
         }
 
         .bdl-diag-note:focus {
-            border-color: #00a1d6;
-            box-shadow: 0 0 0 3px rgba(0, 161, 214, 0.16);
+            border-color: var(--bdl-brand-accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--bdl-brand-accent) 16%, transparent);
         }
 
         .bdl-diag-toolbar {
@@ -2020,9 +2226,9 @@ export const STYLES = `
             gap: 6px;
             padding: 8px 14px;
             border-radius: 10px;
-            border: 1px solid #d1d5db;
-            background: #fff;
-            color: #1f2937;
+            border: 1px solid var(--bdl-border);
+            background: var(--bdl-surface-raise);
+            color: var(--bdl-text);
             font-size: 13px;
             font-weight: 500;
             cursor: pointer;
@@ -2030,41 +2236,41 @@ export const STYLES = `
         }
 
         .bdl-diag-btn:hover {
-            background: #f3f4f6;
-            border-color: #9ca3af;
+            background: var(--bdl-surface-sub);
+            border-color: var(--bdl-text-weak);
         }
 
         .bdl-diag-btn.primary {
-            background: linear-gradient(135deg, #00a1d6 0%, #0081b3 100%);
+            background: linear-gradient(135deg, var(--bdl-brand-accent) 0%, var(--bdl-brand-accent-deep) 100%);
             border-color: transparent;
-            color: #fff;
-            box-shadow: 0 6px 14px rgba(0, 129, 179, 0.28);
+            color: var(--bdl-brand-contrast);
+            box-shadow: 0 6px 14px color-mix(in srgb, var(--bdl-brand-accent-deep) 28%, transparent);
         }
 
         .bdl-diag-btn.primary:hover {
             transform: translateY(-1px);
-            box-shadow: 0 8px 18px rgba(0, 129, 179, 0.34);
-            background: linear-gradient(135deg, #00b1e6 0%, #008fc0 100%);
+            box-shadow: 0 8px 18px color-mix(in srgb, var(--bdl-brand-accent-deep) 34%, transparent);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--bdl-brand-accent) 90%, white) 0%, var(--bdl-brand-accent) 100%);
         }
 
         .bdl-diag-btn.danger {
-            color: #b91c1c;
-            border-color: #fca5a5;
-            background: #fff5f5;
+            color: var(--bdl-danger-text);
+            border-color: var(--bdl-danger-border);
+            background: var(--bdl-danger-bg);
         }
 
         .bdl-diag-btn.danger:hover {
-            background: #fee2e2;
+            background: color-mix(in srgb, var(--bdl-danger-text) 22%, transparent);
         }
 
         .bdl-diag-toast {
             font-size: 12px;
-            color: #047857;
+            color: var(--bdl-success-text);
             padding: 4px 0;
             min-height: 20px;
         }
 
-        .bdl-diag-toast.error { color: #b91c1c; }
+        .bdl-diag-toast.error { color: var(--bdl-danger-text); }
 
         @media (max-width: 720px) {
             .bdl-diag-card {
@@ -2077,9 +2283,6 @@ export const STYLES = `
         }
 
         @media (max-width: 720px) {
-            #bdl-entry {
-                margin-right: 10px;
-            }
 
             #bdl-entry[data-mode="floating"] {
                 right: 16px;
