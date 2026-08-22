@@ -77,8 +77,16 @@ export const Network = {
           if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
         },
         onload(res) {
-          if (res.status >= 200 && res.status < 300) resolve(res.response);
-          else {
+          if (res.status >= 200 && res.status < 300) {
+            const buffer = res.response;
+            // 2xx 也可能带回空响应体，此时必须 reject 才能让上层切换备用地址
+            if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+              Diagnostics.warn('network', `downloadBuffer 响应体为空（HTTP ${res.status}）`, shortUrl(url));
+              reject(new Error('下载失败: 响应体为空'));
+              return;
+            }
+            resolve(buffer);
+          } else {
             Diagnostics.warn('network', `downloadBuffer HTTP ${res.status}`, shortUrl(url));
             reject(new Error('下载失败: ' + res.status));
           }
@@ -113,8 +121,16 @@ export const Network = {
           if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
         },
         onload(res) {
-          if (res.status >= 200 && res.status < 300) resolve(res.response);
-          else reject(new Error('下载失败: ' + res.status));
+          if (res.status >= 200 && res.status < 300) {
+            const blob = res.response;
+            // 同 downloadBuffer：空响应体必须 reject，否则会保存出 0 字节文件
+            if (!(blob instanceof Blob) || blob.size === 0) {
+              Diagnostics.warn('network', `downloadBlob 响应体为空（HTTP ${res.status}）`, shortUrl(url));
+              reject(new Error('下载失败: 响应体为空'));
+              return;
+            }
+            resolve(blob);
+          } else reject(new Error('下载失败: ' + res.status));
         },
         onerror() { reject(new Error('下载网络错误')); },
         ontimeout() { reject(new Error('下载超时')); }
@@ -133,23 +149,30 @@ export const Network = {
     return pageFetch(url, { credentials: 'omit', mode: 'cors' }).then(async response => {
       if (!response.ok) throw new Error('下载失败: ' + response.status);
       const total = parseInt(response.headers.get('Content-Length') || '0', 10);
+
+      let blob: Blob;
       if (!response.body || !total) {
-        return response.blob();
-      }
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          received += value.length;
-          if (onProgress) onProgress(received, total);
+        blob = await response.blob();
+      } else {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            received += value.length;
+            if (onProgress) onProgress(received, total);
+          }
         }
+        blob = new Blob(chunks as BlobPart[]);
       }
-      return new Blob(chunks as BlobPart[]);
+
+      // 空响应体要抛出，让上层回退到 GM_xmlhttpRequest 或下一个候选地址
+      if (blob.size === 0) throw new Error('下载失败: 响应体为空');
+      return blob;
     });
   },
 

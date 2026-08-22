@@ -377,8 +377,10 @@ function makePopup(): string {
           <div class="bdl-progress-track"><div class="bdl-progress-bar merge" id="bdl-progress-merge"></div></div>
         </div>
       </div>
-      <div class="bdl-alert" id="bdl-alert"></div>
-      <button class="bdl-download-btn" id="bdl-download" type="button"><span>开始下载</span></button>
+      <div class="bdl-action-bar" id="bdl-action-bar">
+        <div class="bdl-alert" id="bdl-alert"></div>
+        <button class="bdl-download-btn" id="bdl-download" type="button"><span>开始下载</span></button>
+      </div>
     </div>
     <div class="bdl-footer" id="bdl-footer">
       <span class="bdl-footer-text">仅供学习研究，请支持正版内容创作者</span>
@@ -1030,9 +1032,13 @@ export const UI = {
       return { container: document.body, anchor: null, mode: 'floating' };
     }
 
+    // B 站视频页是 Vue 2 SSR，Vue 在 patch 开始时移除根节点的 data-server-rendered，
+    // 属性仍存在即尚未水合。此时插入外来节点会使水合失配，Vue 丢弃整棵 SSR DOM 重新
+    // 渲染，播放器控制条与简介区随之消失；水合后的 DOM 变动会再次触发挂载。
+    if (document.querySelector('#app[data-server-rendered]')) return null;
+
     // B 站视频页：并入工具栏，与点赞 / 投币 / 收藏 / 分享同级。
-    // 该工具栏为 flex 容器，子项为 .toolbar-left-item-wrap（margin-right: 8px），
-    // 追加同结构元素不影响 Vue 的既有节点。
+    // 该工具栏为 flex 容器，子项为 .toolbar-left-item-wrap（margin-right: 8px）。
     const videoContainer = document.querySelector<HTMLElement>('#arc_toolbar_report .video-toolbar-left-main');
     if (videoContainer) {
       const shareWrap = videoContainer.querySelector('.video-share-wrap')?.closest('.toolbar-left-item-wrap') as HTMLElement | null;

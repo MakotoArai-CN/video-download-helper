@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 import { PLATFORMS } from './src/platforms.ts';
@@ -18,6 +19,17 @@ const matchRules = [
 /** 发布产物地址，同时用于 @downloadURL 与 @updateURL。 */
 const releaseURL =
   'https://github.com/MakotoArai-CN/video-download-helper/releases/latest/download/video-download-helper.user.js';
+
+/**
+ * @icon 内容：构建时把 assets/icon.svg 压成单行并转为 base64 data URI。
+ *
+ * 内联而非引用外站地址，脚本管理器列表与安装页在离线或图床不可达时仍能显示图标。
+ */
+const iconDataURI = `data:image/svg+xml;base64,${btoa(
+  readFileSync(new URL('./assets/icon.svg', import.meta.url), 'utf8')
+    .replace(/>\s+</g, '><')
+    .trim()
+)}`;
 
 export default defineConfig({
   resolve: {
@@ -80,12 +92,12 @@ export default defineConfig({
       userscript: {
         name: '视频下载助手 - 多平台',
         namespace: 'https://github.com/MakotoArai-CN/video-download-helper',
-        version: '0.2.5',
+        version: '0.2.6',
         description:
           '支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、X 等站点的内容解析下载，新增智能诊断日志反馈功能，脚本仅供学习研究使用。',
         author: 'Makoto',
         license: 'MIT',
-        icon: 'https://www.bilibili.com/favicon.ico',
+        icon: iconDataURI,
         match: matchRules,
         grant: ['GM_xmlhttpRequest', 'GM_addStyle', 'GM_getValue', 'GM_setValue', 'unsafeWindow'],
         connect: [

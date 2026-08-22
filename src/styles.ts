@@ -1724,7 +1724,8 @@ export const STYLES = `
         }
 
         .bdl-body {
-            padding: 16px 18px 18px;
+            --bdl-body-pad-x: 18px;
+            padding: 16px var(--bdl-body-pad-x) 0;
             max-height: min(70vh, 660px);
             overflow-y: auto;
             background: var(--bdl-surface);
@@ -2022,6 +2023,28 @@ export const STYLES = `
         .bdl-download-btn:hover:not(:disabled) {
             transform: translateY(-1px);
             box-shadow: 0 12px 28px color-mix(in srgb, var(--bdl-brand) 28%, transparent);
+        }
+
+        /* 操作栏吸底：选项区滚动时提示条与开始下载按钮始终留在面板底部 */
+        .bdl-action-bar {
+            position: sticky;
+            bottom: 0;
+            z-index: 3;
+            margin: 0 calc(-1 * var(--bdl-body-pad-x));
+            padding: 12px var(--bdl-body-pad-x) 18px;
+            background: var(--bdl-surface);
+        }
+
+        /* 上边缘渐隐，提示上方仍有可滚动内容 */
+        .bdl-action-bar::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 100%;
+            height: 16px;
+            background: linear-gradient(to top, var(--bdl-surface), transparent);
+            pointer-events: none;
         }
 
         .bdl-footer {

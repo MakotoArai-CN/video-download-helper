@@ -55,6 +55,7 @@ function bindUIEvents(): void {
     event.stopPropagation();
     if (UI.consumeEntryClickSuppression()) return;
     const shown = UI.togglePopup();
+    if (shown && Utils.getSiteContext().kind === 'bilibili') checkFFmpegAvailability();
     if (shown && !Downloader.isDownloading) Downloader.refreshInfo();
   });
 
@@ -226,7 +227,18 @@ function installWatchers(syncMount: () => void, watch?: WatchConfig): void {
   new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
 }
 
+let ffmpegChecked = false;
+
+/**
+ * 探测 FFmpeg 可用性并更新弹层内的合并方式状态。
+ *
+ * 仅在打开弹层时调用一次。加载期调用会注入 CDN 脚本并拉取 core 与 wasm，与站点首屏
+ * 争抢带宽；合并流程自身按需调用 FFmpegMerger.init，不依赖此函数。
+ */
 function checkFFmpegAvailability(): void {
+  if (ffmpegChecked) return;
+  ffmpegChecked = true;
+
   const updateStatus = (ready: boolean, label?: string, tooltip?: string) => {
     const el = UI.query<HTMLElement>('[data-method="ffmpeg-merge"] .bdl-method-status');
     if (!el) return;
@@ -292,7 +304,6 @@ function init(): void {
   UI.init();
   if (siteContext.kind === 'short-video') UI.setShortVideoMode(siteContext.platform);
   bindUIEvents();
-  if (siteContext.kind === 'bilibili') checkFFmpegAvailability();
   setTimeout(() => Downloader.refreshInfo({ silent: siteContext.kind === 'short-video' }), siteContext.kind === 'short-video' ? 900 : 500);
   console.log(
     '%c\n' +
