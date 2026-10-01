@@ -51,6 +51,7 @@ export const Downloader = {
   /** 第二层选中状态：媒体项下标到其被勾选的图集图片 / 实况图条目下标。 */
   shortSelectedAssets: new Map<number, Set<number>>(),
   shortVideoPageUrl: null as string | null,
+  shortVideoRequestId: 0,
   shortVideoQueue: [] as ShortVideoDownloadTask[],
   activeShortVideoTask: null as ShortVideoDownloadTask | null,
   playData: null as any,
@@ -184,20 +185,38 @@ export const Downloader = {
   },
 
   refreshShortVideoInfo(platform: ShortVideoPlatform, options: RefreshShortVideoOptions = {}): Promise<boolean> {
+    const requestId = ++this.shortVideoRequestId;
+    const pageUrl = location.href;
+    const isCurrent = () => requestId === this.shortVideoRequestId && location.href === pageUrl;
     this.videoInfo = null;
     this.playData = null;
     this.availableSubtitles = [];
     this.hasDanmaku = false;
     this.currentPlatform = platform;
+
+    if (PLATFORMS[platform].externalOnly) {
+      this.shortVideoInfo = null;
+      this.shortVideoItems = [];
+      this.shortVideoPageUrl = null;
+      this.shortItemsAreAlternatives = false;
+      this.selectedShortVideoIndex = 0;
+      this.initShortVideoSelection();
+      UI.setShortVideoMode(platform);
+      UI.setExtraActions([]);
+      UI.hideAlert();
+      UI.positionPopup();
+      return Promise.resolve(false);
+    }
     this.coverUrl = null;
 
-    return ShortVideoAPI.parseUrl(location.href, platform).then(data => {
+    return ShortVideoAPI.parseUrl(pageUrl, platform).then(data => {
+      if (!isCurrent()) return false;
       this.shortVideoItems = data.items?.length ? data.items : [data];
       this.shortItemsAreAlternatives = !!data.alternativeSources && this.shortVideoItems.length > 1;
       this.selectedShortVideoIndex = 0;
       this.initShortVideoSelection();
       this.shortVideoInfo = this.shortVideoItems[0] || data;
-      this.shortVideoPageUrl = location.href;
+      this.shortVideoPageUrl = pageUrl;
       this.coverUrl = this.shortVideoInfo.cover || this.shortVideoInfo.music?.cover || null;
 
       this.renderShortVideoInfo(platform);
@@ -205,6 +224,7 @@ export const Downloader = {
       UI.positionPopup();
       return true;
     }).catch(error => {
+      if (!isCurrent()) return false;
       if (options.silent) {
         console.warn('短视频解析跳过:', error);
         Diagnostics.debug('short-video', `解析跳过 (${platform})`, error);
@@ -234,6 +254,11 @@ export const Downloader = {
   renderShortVideoInfo(platform: ShortVideoPlatform): void {
     if (!this.shortVideoInfo) return;
     UI.updateShortVideoInfo(this.shortVideoInfo, platform);
+    const item = this.shortVideoInfo;
+    const routeSource = platform === 'douyin' && item.video_id
+      ? `https://www.douyin.com/${item.type === 'image' || item.type === 'live' ? 'note' : 'video'}/${item.video_id}`
+      : item.sourceUrl || this.shortVideoPageUrl || location.href;
+    UI.updateDownloadRoutes(platform, routeSource);
     UI.prepareShortVideoItems(this.shortVideoItems, {
       previewIndex: this.selectedShortVideoIndex,
       selectedItems: this.shortSelectedItems,
@@ -621,7 +646,7 @@ export const Downloader = {
       return;
     }
 
-    if (!this.shortVideoInfo || !platform) {
+    if (!this.shortVideoInfo || !platform || this.shortVideoPageUrl !== location.href) {
       if (!platform) {
         UI.showAlert('当前页面暂不支持', 'warning');
         return;
@@ -635,7 +660,6 @@ export const Downloader = {
       });
       return;
     }
-    // URL 变化但已有解析结果（如精选页 modal_id 消失）时直接使用缓存数据
 
     const task = this.createShortVideoTask(platform, this.shortVideoPageUrl || location.href);
     if (!task) {
@@ -646,7 +670,7 @@ export const Downloader = {
   },
 
   prepareShortVideoTask(platform: ShortVideoPlatform): Promise<ShortVideoDownloadTask | null> {
-    if (this.shortVideoInfo) {
+    if (this.shortVideoInfo && this.shortVideoPageUrl === location.href) {
       return Promise.resolve(this.createShortVideoTask(platform, this.shortVideoPageUrl || location.href));
     }
 

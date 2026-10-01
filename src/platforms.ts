@@ -69,7 +69,26 @@ const IMMERSIVE_BAR_SKIN: SkinVars = {
   bgHover: 'rgba(255, 255, 255, 0.24)'
 };
 
+function externalPlatform(label: string, hosts: string[], origin: string, color: string): PlatformDef {
+  return {
+    label, hosts, externalOnly: true, mediaOrigin: origin, mediaReferer: `${origin}/`,
+    brand: { brand: color, brandDeep: color, brandAccent: color, brandContrast: '#FFFFFF' }
+  };
+}
+
 export const PLATFORMS: Record<ShortVideoPlatform, PlatformDef> = {
+  youtube: externalPlatform('YouTube', ['youtube.com', 'youtu.be'], 'https://www.youtube.com', '#CC0000'),
+  tiktok: externalPlatform('TikTok', ['tiktok.com'], 'https://www.tiktok.com', '#C91D46'),
+  instagram: externalPlatform('Instagram', ['instagram.com'], 'https://www.instagram.com', '#B72B77'),
+  facebook: externalPlatform('Facebook', ['facebook.com', 'fb.watch'], 'https://www.facebook.com', '#0866FF'),
+  threads: externalPlatform('Threads', ['threads.net', 'threads.com'], 'https://www.threads.com', '#333333'),
+  pinterest: externalPlatform('Pinterest', ['pinterest.com', 'pin.it'], 'https://www.pinterest.com', '#BD081C'),
+  snapchat: externalPlatform('Snapchat', ['snapchat.com'], 'https://www.snapchat.com', '#756400'),
+  ted: externalPlatform('TED', ['ted.com'], 'https://www.ted.com', '#C92312'),
+  vimeo: externalPlatform('Vimeo', ['vimeo.com'], 'https://vimeo.com', '#087DA5'),
+  twitch: externalPlatform('Twitch', ['twitch.tv'], 'https://www.twitch.tv', '#772CE8'),
+  soundcloud: externalPlatform('SoundCloud', ['soundcloud.com'], 'https://soundcloud.com', '#B94B00'),
+  dailymotion: externalPlatform('Dailymotion', ['dailymotion.com', 'dai.ly'], 'https://www.dailymotion.com', '#0055FF'),
   reddit: {
     label: 'Reddit',
     hosts: ['reddit.com', 'redd.it'],

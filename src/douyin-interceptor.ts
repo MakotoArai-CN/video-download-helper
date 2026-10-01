@@ -15,6 +15,10 @@ export interface DouyinVideoQuality {
 export interface DouyinAwemeDetail {
   aweme_id: string;
   desc: string;
+  images?: Array<{
+    url_list?: string[];
+    video?: { play_addr?: { url_list?: string[] } };
+  }>;
   author?: { nickname?: string; uid?: string; avatar_thumb?: { url_list?: string[] } };
   video?: {
     play_addr?: { url_list: string[] };
@@ -115,9 +119,18 @@ function qualityLabel(item: DouyinVideoQuality): string {
 export function pickHttpUrl(list?: unknown[]): string {
   if (!Array.isArray(list)) return '';
   for (const item of list) {
-    if (typeof item === 'string' && item.startsWith('http')) return item;
+    if (typeof item === 'string' && /^https?:\/\//i.test(item)) return item;
   }
   return '';
+}
+
+export function douyinContentId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const id = parsed.searchParams.get('modal_id') || parsed.searchParams.get('aweme_id')
+      || parsed.pathname.match(/\/(?:video|note|share\/video|share\/note)\/(\d{15,20})(?:\/|$)/)?.[1];
+    return id && /^\d{15,20}$/.test(id) ? id : null;
+  } catch { return null; }
 }
 
 export const DouyinInterceptor = {
@@ -172,7 +185,7 @@ export const DouyinInterceptor = {
       if (seen.has(value)) return;
       seen.add(value);
 
-      if (typeof value.aweme_id === 'string' && value.video) {
+      if (typeof value.aweme_id === 'string' && (value.video || value.images?.length)) {
         storeDetail(value as DouyinAwemeDetail);
         found.push(value as DouyinAwemeDetail);
         return;
@@ -201,19 +214,9 @@ export const DouyinInterceptor = {
 
   // 根据 URL 或 aweme_id 找到对应的 detail
   getByUrl(url: string): DouyinAwemeDetail | null {
-    const idMatch = url.match(/(?:video|note|modal_id=|aweme_id=)(\d{15,20})/i);
-    const awemeId = idMatch?.[1];
-
-    if (awemeId && cache.has(awemeId)) return cache.get(awemeId)!;
-
-    const all = this.scanWindowState();
-    if (awemeId) {
-      const found = all.find(d => d.aweme_id === awemeId);
-      if (found) return found;
-    }
-
-    // 返回最新拦截到的
-    return all[all.length - 1] || null;
+    const awemeId = douyinContentId(url);
+    // 缓存也包含推荐内容，不能用最新响应替代当前作品。
+    return awemeId ? this.getByAwemeId(awemeId) : null;
   },
 
   /**
@@ -276,7 +279,7 @@ export const DouyinInterceptor = {
       const text: string = await response.text();
       const json = JSON.parse(text);
       const detail = json?.aweme_detail;
-      if (detail?.aweme_id) {
+      if (detail?.aweme_id === awemeId) {
         storeDetail(detail as DouyinAwemeDetail);
         return detail as DouyinAwemeDetail;
       }

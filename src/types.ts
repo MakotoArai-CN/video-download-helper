@@ -93,7 +93,19 @@ export type ShortVideoPlatform =
   | 'weibo'
   | 'toutiao'
   | 'x'
-  | 'reddit';
+  | 'reddit'
+  | 'youtube'
+  | 'tiktok'
+  | 'instagram'
+  | 'facebook'
+  | 'threads'
+  | 'pinterest'
+  | 'snapchat'
+  | 'ted'
+  | 'vimeo'
+  | 'twitch'
+  | 'soundcloud'
+  | 'dailymotion';
 
 export type SiteContext =
   | { kind: 'bilibili'; platform: 'bilibili'; sourceType: 'video' | 'bangumi' }
@@ -262,6 +274,8 @@ export type SurfaceScheme = 'auto' | 'light' | 'dark';
  * 挂载点 / 皮肤 / 信息流监听 / 页面上下文下载为可选，缺省时各自走通用兜底逻辑。
  */
 export interface PlatformDef {
+  /** 仅提供外部下载网站入口，不运行站内媒体解析。 */
+  externalOnly?: boolean;
   /** 界面上展示的平台名。 */
   label: string;
   /**

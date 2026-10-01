@@ -1,7 +1,7 @@
 import { parseXhsLocal } from './xhs-api.ts';
 import { RedditAPI } from './reddit-api.ts';
 import { Diagnostics } from './diagnostics.ts';
-import { DouyinInterceptor, pickHttpUrl } from './douyin-interceptor.ts';
+import { DouyinInterceptor, pickHttpUrl, douyinContentId } from './douyin-interceptor.ts';
 import type { DouyinAwemeDetail } from './douyin-interceptor.ts';
 import { KuaishouInterceptor } from './kuaishou-interceptor.ts';
 import type { KuaishouPhoto } from './kuaishou-interceptor.ts';
@@ -930,7 +930,7 @@ async function parseToutiaoLocal(url: string): Promise<ShortVideoData | null> {
  * 表放在本文件而非 platforms.ts：解析器实现依赖本文件的辅助函数，
  * 反向引用会形成循环导入。platforms.ts 只承载数据，不承载行为。
  */
-const PARSERS: Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoData | null>> = {
+const PARSERS: Partial<Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoData | null>>> = {
   douyin: url => ShortVideoAPI.parseDouyinLocal(url),
 
   kuaishou: async url => {
@@ -997,6 +997,20 @@ export const ShortVideoAPI = {
   },
 
   normalizeDouyinDetail(detail: DouyinAwemeDetail, url: string): ShortVideoData {
+    const photos = (detail.images || []).map(image => ({
+      image: pickHttpUrl(image.url_list), video: pickHttpUrl(image.video?.play_addr?.url_list)
+    })).filter(image => image.image);
+    if (photos.length) {
+      const live = photos.some(photo => photo.video);
+      return {
+        type: live ? 'live' : 'image', title: detail.desc || '抖音图集', desc: detail.desc,
+        author: { name: detail.author?.nickname, id: detail.author?.uid },
+        cover: photos[0].image, images: photos.map(photo => photo.image),
+        ...(live ? { live_photo: photos } : {}),
+        music: { title: detail.music?.title, author: detail.music?.author, url: pickHttpUrl(detail.music?.play_url?.url_list) },
+        video_id: detail.aweme_id, platform: 'douyin', sourceUrl: url
+      };
+    }
     const qualities = DouyinInterceptor.extractQualities(detail);
     const primaryUrl = qualities[0]?.url || '';
     const backupUrls = qualities.slice(1).map(q => q.url);
@@ -1017,6 +1031,7 @@ export const ShortVideoAPI = {
       duration: video?.duration ? video.duration / 1000 : null,
       music: musicUrl ? { title: detail.music?.title, author: detail.music?.author, url: musicUrl, cover: musicCover } : undefined,
       platform: 'douyin' as const,
+      video_id: detail.aweme_id,
       sourceUrl: url,
       itemLabel: q.label
     }));
@@ -1032,6 +1047,7 @@ export const ShortVideoAPI = {
       duration: video?.duration ? video.duration / 1000 : null,
       music: musicUrl ? { title: detail.music?.title, author: detail.music?.author, url: musicUrl, cover: musicCover } : undefined,
       platform: 'douyin',
+      video_id: detail.aweme_id,
       sourceUrl: url,
       items: items.length > 1 ? items : undefined,
       alternativeSources: items.length > 1
@@ -1039,17 +1055,8 @@ export const ShortVideoAPI = {
   },
 
   async parseDouyinLocal(url: string, waitMs = 3000): Promise<ShortVideoData | null> {
-    const extractAwemeId = (u: string): string | null => {
-      try {
-        const p = new URL(u);
-        return p.searchParams.get('modal_id')
-          || p.searchParams.get('aweme_id')
-          || p.pathname.match(/\/(?:video|note)\/(\d{15,20})/)?.[1]
-          || null;
-      } catch {
-        return null;
-      }
-    };
+    const extractAwemeId = douyinContentId;
+    const hasMedia = (data: ShortVideoData) => Boolean(data.url || data.images?.length || data.live_photo?.length);
 
     const AWEME_ID_RE = /\b(\d{15,20})\b/;
 
@@ -1179,10 +1186,10 @@ export const ShortVideoAPI = {
 
     // 方案4 快速路径：URL 中有 aweme_id 则立即请求官方 API
     if (awemeIdFromUrl) {
-      const detail = await DouyinInterceptor.fetchDetail(awemeIdFromUrl);
+      const detail = DouyinInterceptor.getByAwemeId(awemeIdFromUrl) || await DouyinInterceptor.fetchDetail(awemeIdFromUrl);
       if (detail) {
         const data = this.normalizeDouyinDetail(detail, url);
-        if (data.url) return data;
+        if (hasMedia(data)) return data;
       }
     }
 
@@ -1193,13 +1200,13 @@ export const ShortVideoAPI = {
         const cached = DouyinInterceptor.getByAwemeId(domId);
         if (cached) {
           const data = this.normalizeDouyinDetail(cached, url);
-          if (data.url) return data;
+          if (hasMedia(data)) return data;
         }
         // 缓存未命中则直接调 API
         const detail = await DouyinInterceptor.fetchDetail(domId);
         if (detail) {
           const data = this.normalizeDouyinDetail(detail, url);
-          if (data.url) return data;
+          if (hasMedia(data)) return data;
         }
       }
     }
@@ -1210,14 +1217,15 @@ export const ShortVideoAPI = {
     let lastDomIdFetched: string | null = null;
 
     for (let i = 0; i < maxTries; i++) {
+      if (location.href !== url) return null;
       const detail = DouyinInterceptor.getByUrl(url);
       if (detail) {
         const data = this.normalizeDouyinDetail(detail, url);
-        if (data.url) return data;
+        if (hasMedia(data)) return data;
       }
 
       const dom = DouyinInterceptor.getFromDom();
-      if (dom?.url) {
+      if (dom?.url && !/\/note\//.test(new URL(url).pathname)) {
         return {
           type: 'video',
           title: document.title.replace(/[-_|｜]?\s*抖音.*$/i, '').trim() || '抖音视频',
@@ -1238,8 +1246,8 @@ export const ShortVideoAPI = {
           lastDomIdFetched = domId;
           const detail2 = await DouyinInterceptor.fetchDetail(domId);
           if (detail2) {
-            const data = this.normalizeDouyinDetail(detail2, location.href);
-            if (data.url) return data;
+            const data = this.normalizeDouyinDetail(detail2, url);
+            if (hasMedia(data)) return data;
           }
         }
       }
@@ -1255,8 +1263,8 @@ export const ShortVideoAPI = {
       if (fallbackId) {
         const detail = await DouyinInterceptor.fetchDetail(fallbackId);
         if (detail) {
-          const data = this.normalizeDouyinDetail(detail, location.href);
-          if (data.url) return data;
+          const data = this.normalizeDouyinDetail(detail, url);
+          if (hasMedia(data)) return data;
         }
       }
     }

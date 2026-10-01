@@ -8,6 +8,7 @@ import { DouyinInterceptor } from './douyin-interceptor.ts';
 import { KuaishouInterceptor } from './kuaishou-interceptor.ts';
 import { Diagnostics } from './diagnostics.ts';
 import { PLATFORMS } from './platforms.ts';
+import { watchNavigation } from './navigation.ts';
 import type { GifOutput, WatchConfig } from './types.ts';
 
 // 最早期启用诊断日志，覆盖到脚本入口的所有阶段
@@ -161,17 +162,22 @@ function bindUIEvents(): void {
  */
 function installWatchers(syncMount: () => void, watch?: WatchConfig): void {
   const urlChangeDelay = watch?.urlChangeDelayMs ?? 1500;
-  let lastUrl = location.href;
-  new MutationObserver(() => {
-    syncMount();
-    if (location.href === lastUrl) return;
-    lastUrl = location.href;
+  let navigationTimer = 0;
+  watchNavigation(() => {
+    Downloader.shortVideoRequestId++;
     UI.hidePopup();
     UI.ensureMounted();
-    setTimeout(() => {
+    clearTimeout(navigationTimer);
+    navigationTimer = window.setTimeout(() => {
       UI.ensureMounted();
       Downloader.refreshInfo({ silent: true });
     }, urlChangeDelay);
+  });
+  new MutationObserver(mutations => {
+    const own = (node: Node) => node.nodeType === 1 && (
+      node === UI.host || node === UI.inlineHost || node === UI.inlineSkeleton
+    );
+    if (mutations.some(mutation => Array.from(mutation.addedNodes).concat(Array.from(mutation.removedNodes)).some(node => !own(node)))) syncMount();
   }).observe(document.body, { childList: true, subtree: true });
 
   if (!watch) return;

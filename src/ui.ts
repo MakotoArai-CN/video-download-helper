@@ -1,4 +1,5 @@
 import { STYLES } from './styles.ts';
+import { renderRouteSection } from './route-ui.ts';
 import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
 import { Diagnostics, type DiagnosticEntry } from './diagnostics.ts';
@@ -350,6 +351,7 @@ function makePopup(): string {
         </div>
       </div>
       <div class="bdl-extra-downloads" id="bdl-extra-downloads"></div>
+      <section class="bdl-section bdl-routes" id="bdl-routes" hidden></section>
       <div class="bdl-tips" id="bdl-tips" style="display:none;">
         <div class="bdl-tips-title">提示</div>
         <div id="bdl-tips-content"></div>
@@ -537,6 +539,7 @@ export const UI = {
       audioCodec: g('bdl-audio-codec'),
       methods: g('bdl-methods'),
       extraDownloads: g('bdl-extra-downloads'),
+      routes: g('bdl-routes'),
       progress: g('bdl-progress'),
       progressVideo: g('bdl-progress-video'),
       progressVideoText: g('bdl-progress-video-text'),
@@ -1967,6 +1970,8 @@ export const UI = {
   },
 
   setBilibiliMode(): void {
+    if (this.elements.routes) this.elements.routes.hidden = true;
+    this.elements.download.style.display = '';
     this.hideShortVideoItems();
     this.setGifFormatVisible(false);
     this.elements.pagesSection.style.display = '';
@@ -1981,6 +1986,9 @@ export const UI = {
   },
 
   setShortVideoMode(platform: ShortVideoPlatform): void {
+    const externalOnly = !!PLATFORMS[platform].externalOnly;
+    this.elements.download.style.display = externalOnly ? 'none' : '';
+    this.updateDownloadRoutes(platform);
     this.hidePagesSection();
     this.hideUGCSection();
     this.hideShortVideoItems();
@@ -2000,6 +2008,16 @@ export const UI = {
     setHTML(this.elements.duration, '<span class="bdl-meta-label">类型</span><span>短视频/图集</span>');
     setHTML(this.elements.vip, `<span class="bdl-vip-badge site">${getPlatformLabel(platform)}</span>`);
     this.setPrimaryButtonLabel('解析内容');
+    if (externalOnly) {
+      this.elements.title.textContent = `${getPlatformLabel(platform)} 下载`;
+      this.elements.title.title = this.elements.title.textContent;
+      this.elements.author.textContent = '选择下载网站后继续';
+      this.elements.duration.textContent = '外部下载';
+    }
+  },
+
+  updateDownloadRoutes(platform: ShortVideoPlatform, sourceUrl = location.href): void {
+    if (this.elements.routes) renderRouteSection(this.elements.routes, platform, sourceUrl, !!PLATFORMS[platform].externalOnly);
   },
 
   resetSectionsVisibility(): void {

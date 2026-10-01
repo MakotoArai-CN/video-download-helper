@@ -21,20 +21,27 @@ export function extractXhsNote(state: any, id: string, url: string): ShortVideoD
     const note = unwrap(value.note ?? value.noteDetail ?? value);
     const noteId = note?.noteId ?? note?.note_id ?? note?.id ?? key;
     if (noteId === id) {
-      const images: string[] = (note.imageList ?? note.image_list ?? []).map((img: any) => {
+      const livePhotos = (note.imageList ?? note.image_list ?? []).map((img: any) => {
         const info = img.infoList ?? img.info_list ?? [];
-        return http(img.urlDefault) || http(info.find((i: any) => i.imageScene === 'WB_DFT')?.url)
+        const image = http(img.urlDefault) || http(info.find((i: any) => i.imageScene === 'WB_DFT')?.url)
           || http(img.url) || http(info[0]?.url) || http(img.urlPre);
-      }).filter(Boolean);
+        const stream = img.stream ?? img.video?.media?.stream;
+        const video = ['h264', 'h265', 'av1'].flatMap(codec => stream?.[codec] ?? [])
+          .flatMap((s: any) => [s.masterUrl, ...(s.backupUrls ?? [])]).map(http).find(Boolean) || '';
+        return { image, video };
+      }).filter((photo: { image: string }) => photo.image);
+      const images: string[] = livePhotos.map((photo: { image: string }) => photo.image);
+      const hasLive = note.type === 'normal' && livePhotos.some((photo: { video: string }) => photo.video);
       const streams = note.video?.media?.stream;
       const candidates: string[] = ['h264', 'h265', 'av1'].flatMap(codec => streams?.[codec] ?? [])
         .flatMap((s: any) => [s.masterUrl, ...(s.backupUrls ?? [])]).map(http).filter(Boolean);
       const video = note.type !== 'normal' ? candidates[0] : '';
       if (video || images.length) return {
-        type: video ? 'video' : 'image', title: note.title || note.desc || '小红书内容',
+        type: video ? 'video' : hasLive ? 'live' : 'image', title: note.title || note.desc || '小红书内容',
         desc: note.desc || '', author: { name: note.user?.nickname || '' },
         cover: images[0] || '', images: video ? [] : images,
         url: video || '', video_backup: candidates.slice(1), video_id: id,
+        ...(hasLive ? { live_photo: livePhotos } : {}),
         platform: 'xiaohongshu', sourceUrl: url
       };
     }
