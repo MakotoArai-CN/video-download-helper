@@ -2,6 +2,7 @@ import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
 import { ShortVideoAPI } from './short-video-api.ts';
 import { MergeManager } from './merge-manager.ts';
+import { JSMerger } from './merger.ts';
 import { GifManager } from './gif-manager.ts';
 import { ThreadManager } from './thread-manager.ts';
 import { CompleteEffect } from './complete-effect.ts';
@@ -476,6 +477,7 @@ export const Downloader = {
       const convert = item.animated && this.gifMethod !== 'video' ? this.gifMethod : null;
       return [{
         candidates,
+        ...(item.audio_url ? { audioCandidates: [item.audio_url] } : {}),
         filename: `${base}.${convert ? 'gif' : Utils.inferExtension(candidates[0], 'mp4')}`,
         label: item.animated ? 'GIF' : '视频',
         ...(convert ? { convert } : {})
@@ -1002,7 +1004,25 @@ export const Downloader = {
         percents[index] = percent;
         report();
       })
-    ).then(blob => convert(unit, blob)).then(blob => {
+    ).then(async blob => {
+      if (!unit.audioCandidates?.length) return blob;
+      const audio = await ThreadManager.runTask(() => this.fetchBlobCandidates(unit.audioCandidates!, platform, () => {}));
+      if (blob.size + audio.size > CONFIG.MAX_MERGE_BYTES) throw new Error('音视频过大，无法在浏览器内合并');
+      // 与 GIF 转码共用串行队列，避免多个大视频同时占用合并内存。
+      const task = convertChain.then(async () => {
+        convertLabel = '合并音视频';
+        report();
+        const videoBuffer = await blob.arrayBuffer();
+        const audioBuffer = await audio.arrayBuffer();
+        if (!JSMerger.findBox(JSMerger.parseBoxes(audioBuffer), 'moov')) throw new Error('音轨文件结构不完整');
+        const result = await JSMerger.merge(videoBuffer, audioBuffer, {
+          title: zipName, author: '', description: '', duration: 0
+        });
+        return new Blob([result], { type: 'video/mp4' });
+      });
+      convertChain = task.then(() => { convertLabel = ''; }, () => { convertLabel = ''; });
+      return task;
+    }).then(blob => convert(unit, blob)).then(blob => {
       percents[index] = 100;
       done += 1;
       report();

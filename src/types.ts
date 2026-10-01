@@ -92,7 +92,8 @@ export type ShortVideoPlatform =
   | 'xiaohongshu'
   | 'weibo'
   | 'toutiao'
-  | 'x';
+  | 'x'
+  | 'reddit';
 
 export type SiteContext =
   | { kind: 'bilibili'; platform: 'bilibili'; sourceType: 'video' | 'bangumi' }
@@ -319,6 +320,7 @@ export interface ShortVideoLivePhoto {
 export interface MediaUnit {
   /** 候选地址，按顺序尝试，首个成功的即为结果。 */
   candidates: string[];
+  audioCandidates?: string[];
   /** 保存时的文件名，含扩展名。 */
   filename: string;
   /** 进度提示上显示的名称。 */
@@ -336,6 +338,7 @@ export interface ShortVideoData {
   url?: string;
   duration?: number | null;
   video_backup?: string[];
+  audio_url?: string;
   video_id?: string;
   images?: string[];
   live_photo?: ShortVideoLivePhoto[];

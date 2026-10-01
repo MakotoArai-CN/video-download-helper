@@ -1,3 +1,5 @@
+import { parseXhsLocal } from './xhs-api.ts';
+import { RedditAPI } from './reddit-api.ts';
 import { Diagnostics } from './diagnostics.ts';
 import { DouyinInterceptor, pickHttpUrl } from './douyin-interceptor.ts';
 import type { DouyinAwemeDetail } from './douyin-interceptor.ts';
@@ -635,125 +637,6 @@ async function parseKuaishouLocal(url: string, itemLabel?: string): Promise<Shor
 // ---------------------------------------------------------------------------
 // 小红书本地解析
 // ---------------------------------------------------------------------------
-function parseXhsWindowState(url: string): ShortVideoData | null {
-  const win = getPageWindow();
-  const stateKeys = ['__INITIAL_SSR_STATE__', '__NUXT__', '__data', 'initialState', '__REDUX_STATE__'];
-
-  const walk = (value: any, depth: number, seen: WeakSet<object>): ShortVideoData | null => {
-    if (depth > 8 || !value || typeof value !== 'object') return null;
-    if (seen.has(value)) return null;
-    seen.add(value);
-
-    // Look for XHS note structure
-    if (value.note || value.noteDetail) {
-      const note = value.note || value.noteDetail;
-      if (note?.video?.media?.stream) {
-        const streams = note.video.media.stream;
-        const h264 = streams.h264?.[0] || streams.av1?.[0] || streams.h265?.[0];
-        if (h264?.masterUrl) {
-          const videoUrl = h264.masterUrl;
-          const images = note.imageList?.map((img: any) => img?.urlDefault || img?.url).filter(Boolean) || [];
-          const isImageNote = images.length > 0 && !videoUrl;
-          return {
-            type: isImageNote ? 'image' : 'video',
-            title: note.title || note.desc || '小红书内容',
-            desc: note.desc || '',
-            author: { name: note.user?.nickname || note.author?.nickname || '' },
-            cover: note.cover?.urlDefault || note.cover?.url || '',
-            url: videoUrl || '',
-            images: isImageNote ? images : [],
-            platform: 'xiaohongshu',
-            sourceUrl: url
-          };
-        }
-      }
-      // Image note
-      if (note?.imageList?.length > 0) {
-        const images = note.imageList.map((img: any) => img?.urlDefault || img?.infoList?.[0]?.url || img?.url).filter(Boolean);
-        if (images.length > 0) {
-          return {
-            type: 'image',
-            title: note.title || note.desc || '小红书图集',
-            desc: note.desc || '',
-            author: { name: note.user?.nickname || '' },
-            cover: images[0],
-            url: '',
-            images,
-            platform: 'xiaohongshu',
-            sourceUrl: url
-          };
-        }
-      }
-    }
-
-    const entries = Object.entries(value).slice(0, 100);
-    for (const [, v] of entries) {
-      const found = walk(v, depth + 1, seen);
-      if (found) return found;
-    }
-    return null;
-  };
-
-  const seen = new WeakSet<object>();
-  for (const key of stateKeys) {
-    try {
-      const result = walk(win[key], 0, seen);
-      if (result) return result;
-    } catch {}
-  }
-
-  // Also try performance entries for xhs video CDN
-  try {
-    const videoUrls = performance.getEntriesByType('resource')
-      .map(e => e.name)
-      .filter(n => /xhscdn\.com.*\.mp4/i.test(n) || /sns-video.*\.mp4/i.test(n));
-    if (videoUrls.length > 0) {
-      const video = getBestVisibleVideo();
-      return {
-        type: 'video',
-        title: document.title.replace(/[-_|｜]?\s*小红书.*$/i, '').trim() || '小红书视频',
-        desc: '',
-        author: {},
-        cover: video?.poster || '',
-        url: videoUrls[0],
-        platform: 'xiaohongshu',
-        sourceUrl: url
-      };
-    }
-  } catch {}
-  return null;
-}
-
-async function parseXhsLocal(url: string): Promise<ShortVideoData | null> {
-  // Try immediately
-  const immediate = parseXhsWindowState(url);
-  if (immediate?.url || (immediate?.images && immediate.images.length > 0)) return immediate;
-
-  // Poll for SSR data to populate
-  for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 300));
-    const result = parseXhsWindowState(url);
-    if (result?.url || (result?.images && result.images.length > 0)) return result;
-  }
-
-  // DOM fallback: video element
-  const video = getBestVisibleVideo();
-  const src = video?.currentSrc || video?.src;
-  if (src && src.startsWith('http')) {
-    return {
-      type: 'video',
-      title: document.title.replace(/[-_|｜]?\s*小红书.*$/i, '').trim() || '小红书视频',
-      desc: '',
-      author: {},
-      cover: video?.poster || '',
-      url: src,
-      platform: 'xiaohongshu',
-      sourceUrl: url
-    };
-  }
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // 微博本地解析
 // ---------------------------------------------------------------------------
@@ -1085,6 +968,8 @@ const PARSERS: Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoDat
     const local = await parseToutiaoLocal(url);
     return local ? combineShortVideoItems([local], 'toutiao', url) : null;
   },
+
+  reddit: url => RedditAPI.parseUrl(url),
 
   x: async url => {
     const data = await XAPI.parseUrl(url);

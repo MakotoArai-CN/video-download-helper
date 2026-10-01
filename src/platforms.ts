@@ -70,6 +70,13 @@ const IMMERSIVE_BAR_SKIN: SkinVars = {
 };
 
 export const PLATFORMS: Record<ShortVideoPlatform, PlatformDef> = {
+  reddit: {
+    label: 'Reddit',
+    hosts: ['reddit.com', 'redd.it'],
+    mediaReferer: 'https://www.reddit.com/',
+    mediaOrigin: 'https://www.reddit.com',
+    brand: { brand: '#FF4500', brandDeep: '#D93900', brandAccent: '#FF8717', brandContrast: '#FFFFFF' }
+  },
   /**
    * 抖音。
    *

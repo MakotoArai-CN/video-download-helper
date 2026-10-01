@@ -92,9 +92,9 @@ export default defineConfig({
       userscript: {
         name: '视频下载助手 - 多平台',
         namespace: 'https://github.com/MakotoArai-CN/video-download-helper',
-        version: '0.2.6',
+        version: '0.2.7',
         description:
-          '支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、X 等站点的内容解析下载，新增智能诊断日志反馈功能，脚本仅供学习研究使用。',
+          '支持哔哩哔哩原生下载，以及抖音、快手、小红书、微博、今日头条、X、Reddit 等站点的内容解析下载，新增智能诊断日志反馈功能，脚本仅供学习研究使用。',
         author: 'Makoto',
         license: 'MIT',
         icon: iconDataURI,
