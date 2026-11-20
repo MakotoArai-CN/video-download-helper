@@ -408,8 +408,37 @@ function runOnce(owner: { ffmpeg: any }, inputs: VfsFile[], argv: string[], outF
         if (e && e.name === 'ExitStatus' && e.status === 0) return;
         throw e;
       })
-      .then(() => instance.FS('readFile', outFile) as Uint8Array);
+      .then(() => (instance.FS('readFile', outFile) as Uint8Array).slice())
+      .finally(() => { try { instance.exit(); } catch {} });
   });
+}
+
+let mediaWasmQueue: Promise<unknown> = Promise.resolve();
+
+/** 输入已由浏览器下载至内存；WASM 只访问本地虚拟文件，不访问远程 URL。 */
+export function remuxLocalMedia(files: VfsFile[], inputs: string[], extension = 'mp4', audioOnly = false): Promise<Uint8Array> {
+  const run = async () => {
+    if (!['mp4', 'm4a', 'webm'].includes(extension)) throw new Error('不支持的输出容器');
+    if (files.some(file => !/^[a-zA-Z0-9_.-]+$/.test(file.name))) throw new Error('无效的本地媒体文件名');
+    const args = inputs.flatMap(name => [
+      '-protocol_whitelist', 'file,crypto,data', ...(name.endsWith('.m3u8') ? ['-allowed_extensions', 'ALL'] : []), '-i', name
+    ]);
+    const maps = audioOnly ? ['-map', '0:a:0'] : inputs.length > 1
+      ? ['-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0?', '-map', '0:a:0?'];
+    const output = `output.${extension}`;
+    const owner = { ffmpeg: null };
+    try {
+      return await runOnce(owner, files, [...args, ...maps, '-c', 'copy', '-y', output], output);
+    } catch {
+      // 不兼容目标容器的编码在本机转码；不将无法解码的输入直接改扩展名保存。
+      const codec = extension === 'webm' ? ['-c:v', 'libvpx', '-c:a', 'libopus']
+        : audioOnly ? ['-c:a', 'aac'] : ['-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac'];
+      return runOnce(owner, files, [...args, ...maps, ...codec, '-y', output], output);
+    }
+  };
+  const result = mediaWasmQueue.then(run);
+  mediaWasmQueue = result.catch(() => {});
+  return result;
 }
 
 export const FFmpegMerger = {

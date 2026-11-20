@@ -9,6 +9,7 @@ import { KuaishouInterceptor } from './kuaishou-interceptor.ts';
 import { Diagnostics } from './diagnostics.ts';
 import { PLATFORMS } from './platforms.ts';
 import { watchNavigation } from './navigation.ts';
+import { NativeCapture } from './native-capture.ts';
 import type { GifOutput, WatchConfig } from './types.ts';
 
 // 最早期启用诊断日志，覆盖到脚本入口的所有阶段
@@ -19,6 +20,7 @@ const _earlyCtx = Utils.getSiteContext();
 if (_earlyCtx.kind === 'short-video') {
   if (_earlyCtx.platform === 'douyin') DouyinInterceptor.install();
   if (_earlyCtx.platform === 'kuaishou') KuaishouInterceptor.install();
+  if (!['douyin', 'kuaishou', 'xiaohongshu', 'weibo', 'toutiao', 'x', 'reddit'].includes(_earlyCtx.platform)) NativeCapture.install(_earlyCtx.platform);
 }
 
 declare const FFmpeg: any;
@@ -298,6 +300,14 @@ function init(): void {
 
   if (!document.body) {
     scheduleInit(50);
+    return;
+  }
+
+  // A second installed copy must not create another entry. The first copy's
+  // MutationObserver would otherwise mount its toolbar entry again after the
+  // new copy replaces the shared host, leaving duplicate buttons behind.
+  if (UI.hasExistingPanel()) {
+    initialized = true;
     return;
   }
 

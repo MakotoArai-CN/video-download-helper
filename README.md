@@ -1,6 +1,6 @@
 # 视频下载助手
 
-一个面向 Userscript 管理器的浏览器下载辅助脚本。哔哩哔哩及已接入原生解析的平台使用页面数据、站点接口和浏览器本地下载逻辑；其他平台提供外部下载网站入口。
+一个面向 Userscript 管理器的浏览器下载辅助脚本。所有平台均在本机读取页面数据、请求原站接口并解析媒体，不向第三方解析服务提交内容链接。下载与合并在浏览器内完成。
 
 ## 功能概览
 
@@ -11,8 +11,8 @@
 | B 站合并 | JS 原生合并、分离下载、FFmpeg 合并 | 默认推荐 JS 原生合并 |
 | 短视频解析 | 抖音、快手、小红书、微博、今日头条、X (Twitter)、Reddit | 依赖页面数据与站点接口 |
 | 快手推荐流 | `new-reco` 当前播放内容 | 优先读取页面当前媒体源，成功率取决于页面暴露信息 |
-| 外部下载网站 | YouTube、TikTok、Instagram、Facebook、Threads、Pinterest、Snapchat、TED、Vimeo、Twitch、SoundCloud、Dailymotion | 转交当前内容链接到所选网站，不在脚本内解析或下载 |
-| 备用线路 | 抖音、小红书、X、Reddit | 保留原生下载，同时提供适用的外部网站入口 |
+| 扩展平台本地解析 | YouTube、TikTok、Instagram、Facebook、Threads、Pinterest、Snapchat、TED、Twitch、SoundCloud | 读取当前内容的页面数据与原站接口，受页面暴露信息和账号权限限制 |
+| 流媒体处理 | 有限 HLS、DASH、独立音视频 | 下载分片后在浏览器内合并 |
 
 ## 免责声明
 
@@ -90,32 +90,23 @@ Reddit 请先打开具体帖子再点击下载入口。纯文字和外站视频�
 - 短视频下载过程中，再次点击下载按钮会尝试解析当前页面并加入等待队列。
 - 重复内容不会重复入队。
 
-## 外部下载网站
+## 扩展平台本地解析
 
-打开具体内容页，点击下载入口，在“下载网站”中选择服务并点击“打开下载网站”。服务会在新标签页打开，并收到当前内容链接；选择会按平台记住。已有原生解析的平台，在面板中的“备用下载网站”提供同样的入口。
+打开具体内容页，先确认可以正常播放，再点击下载入口。脚本按作品 ID 匹配页面数据，避免下载推荐内容或页面切换前的旧视频。
 
-| 平台 | 识别的主要页面 | 可选网站 |
-| --- | --- | --- |
-| YouTube | watch、Shorts、embed、live、youtu.be；含移动版与 Music | SaveAnyYouTube、SSYouTube、Yout、Tenzaa、Tool77、GrabShorts、Y2Mate Stream |
-| TikTok | 视频、图集、t/v 链接、vm/vt 短链接 | Yout、Tool77、GrabShorts |
-| Instagram | 帖子、Reels、TV、带内容 ID 的 Stories | Yout、Tool77、GrabShorts |
-| Facebook | watch 视频、Reels、videos、share/v、share/r、fb.watch | Yout、Tool77 |
-| Threads | threads.net / threads.com 帖子及 t 链接 | Tool77、GrabShorts |
-| Pinterest | Pin 详情、pin.it | Tool77 |
-| Snapchat | Spotlight | Tool77 |
-| TED | talks | Tool77 |
-| Vimeo | 视频、播放器、频道/群组视频、showcase/album 视频 | Yout |
-| Twitch | VOD、频道 Clip、clips.twitch.tv | Yout |
-| SoundCloud | 单曲、on.soundcloud.com 短链接 | Yout |
-| Dailymotion | 视频、嵌入页、dai.ly | Yout、Tool77 |
-| 抖音 | video、note、modal_id/aweme_id、分享链接 | Tool77、GrabShorts |
-| 小红书 | explore、discovery/item、个人页笔记、短链接 | Tool77 |
-| X / Twitter | 推文及 photo/video 子页面 | Yout、Tool77、GrabShorts |
-| Reddit | comments、gallery、redd.it | Yout |
+| 平台 | 当前实现 |
+| --- | --- |
+| YouTube | 读取播放器响应；完整音视频直链、独立音视频、本地播放器签名处理、HLS/DASH |
+| TikTok | 页面状态中的视频与图集 |
+| Instagram、Threads | 页面状态及已捕获原站响应中的视频、图片和混合轮播 |
+| Facebook | 页面媒体直链与 DASH 清单 |
+| Pinterest、Snapchat、TED | 当前内容的页面数据或标准媒体元数据 |
+| Twitch | 原站 Clip/VOD 接口；尚未结束的直播不支持 |
+| SoundCloud | 当前曲目的页面数据及原站音频接口 |
 
-“检查网站响应”只检查所选网站首页的 HTTP 响应，不发送当前内容链接，也不会自动切换线路。网站响应正常不代表能解析或下载当前内容；登录要求、清晰度与下载结果取决于第三方网站。以上为链接识别和转交范围，并非逐平台下载成功保证。
+这些是已实现的解析路径，并非所有页面、账号或清晰度均可下载。短链接需先由站点跳转到具体内容页。YouTube 网页仅返回 SABR 时，会请求原站移动播放器接口尝试获取普通媒体格式；这不是 SABR 协议解码，登录限制或原站未提供普通格式时仍会失败。没有完整音视频源时会提示失败。
 
-页面切换后会更新内容链接；首页、个人主页和缺少内容参数的页面不提供无效的外部下载链接。小红书 `xsec_token`、Vimeo `h` 等访问参数会保留。
+HLS 支持有限播放列表、独立音轨、字节范围、初始化段及普通 AES-128；DASH 支持单 Period、SegmentList 和有限 SegmentTemplate。持续直播、DRM、多 Period 等不支持的格式会明确报错。
 
 ## 合并与保存
 
@@ -132,7 +123,7 @@ Reddit 请先打开具体帖子再点击下载入口。纯文字和外站视频�
 - 清晰度取决于账号权限和平台接口返回结果。
 - 脚本不会破解付费、DRM 或无权限内容。
 - 大文件下载和浏览器内合并会占用较多内存。
-- 原生解析依赖页面数据和站点接口，接口变更、平台风控或页面改版都可能导致解析失败；外部下载依赖所选第三方网站。
+- 本地解析依赖页面数据和原站接口，接口变更、平台风控或页面改版都可能导致解析失败。
 - 快手 `new-reco` 不是具体作品 URL，解析成功率取决于页面是否暴露当前播放视频源或作品 ID。
 
 ## 故障排查
@@ -156,7 +147,8 @@ ffmpeg -i "input_video.mp4" -i "input_audio.m4a" -c copy "output_merged.mp4"
 | --- | --- |
 | 源码入口 | `src/main.ts` |
 | 配置文件 | `src/config.ts` |
-| 平台与线路 | `src/platforms.ts`、`src/download-routes.ts` |
+| 平台与本地解析 | `src/platforms.ts`、`src/native-platforms.ts`、`src/youtube-api.ts` |
+| 流媒体与原站请求 | `src/stream-media.ts`、`src/media-http.ts` |
 | 回归测试 / 类型检查 | `bun test` / `bun run type-check` |
 | 构建命令 | `bun run build` |
 | 生成脚本 | `dist/video-download-helper.user.js` |

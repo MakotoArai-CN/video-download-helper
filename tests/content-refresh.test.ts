@@ -83,15 +83,3 @@ test('旧解析成功或失败都不能覆盖新页面数据', async () => {
   expect(alert).not.toHaveBeenCalled();
   expect(render).toHaveBeenCalledTimes(1);
 });
-
-test('新增平台只展示外部线路，不调用原生解析器或发出解析失败提示', async () => {
-  win.location.href = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-  const parse = spyOn(ShortVideoAPI, 'parseUrl');
-  const mode = spyOn(UI, 'setShortVideoMode').mockImplementation(() => {});
-  mocks.push(parse, mode, spyOn(UI, 'setExtraActions').mockImplementation(() => {}),
-    spyOn(UI, 'hideAlert').mockImplementation(() => {}), spyOn(UI, 'positionPopup').mockImplementation(() => {}));
-  await Downloader.refreshShortVideoInfo('youtube');
-  expect(parse).not.toHaveBeenCalled();
-  expect(mode).toHaveBeenCalledWith('youtube');
-  expect(Downloader.shortVideoInfo).toBeNull();
-});

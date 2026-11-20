@@ -102,10 +102,8 @@ export type ShortVideoPlatform =
   | 'pinterest'
   | 'snapchat'
   | 'ted'
-  | 'vimeo'
   | 'twitch'
-  | 'soundcloud'
-  | 'dailymotion';
+  | 'soundcloud';
 
 export type SiteContext =
   | { kind: 'bilibili'; platform: 'bilibili'; sourceType: 'video' | 'bangumi' }
@@ -274,8 +272,6 @@ export type SurfaceScheme = 'auto' | 'light' | 'dark';
  * 挂载点 / 皮肤 / 信息流监听 / 页面上下文下载为可选，缺省时各自走通用兜底逻辑。
  */
 export interface PlatformDef {
-  /** 仅提供外部下载网站入口，不运行站内媒体解析。 */
-  externalOnly?: boolean;
   /** 界面上展示的平台名。 */
   label: string;
   /**
@@ -331,10 +327,19 @@ export interface ShortVideoLivePhoto {
  *
  * 图集的每张图、实况图的每个图与视频、视频本身各自是一个单位。
  */
+export interface MediaProcessing {
+  kind: 'hls' | 'dash' | 'remux';
+  audioOnly?: boolean;
+  /** 原站直接在页面返回的 DASH XML。 */
+  manifest?: string;
+}
+
 export interface MediaUnit {
   /** 候选地址，按顺序尝试，首个成功的即为结果。 */
   candidates: string[];
   audioCandidates?: string[];
+  processing?: MediaProcessing;
+  outputExt?: string;
   /** 保存时的文件名，含扩展名。 */
   filename: string;
   /** 进度提示上显示的名称。 */
@@ -353,6 +358,8 @@ export interface ShortVideoData {
   duration?: number | null;
   video_backup?: string[];
   audio_url?: string;
+  processing?: MediaProcessing;
+  output_ext?: 'mp4' | 'm4a' | 'webm' | 'mp3';
   video_id?: string;
   images?: string[];
   live_photo?: ShortVideoLivePhoto[];

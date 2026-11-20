@@ -1,5 +1,4 @@
 import { STYLES } from './styles.ts';
-import { renderRouteSection } from './route-ui.ts';
 import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
 import { Diagnostics, type DiagnosticEntry } from './diagnostics.ts';
@@ -121,6 +120,7 @@ function getItemAssets(item: ShortVideoData): ShortItemAsset[] {
 function getItemTypeLabel(item: ShortVideoData): string {
   if (item.type === 'image') return `图集${item.images?.length ? ` ${item.images.length}张` : ''}`;
   if (item.type === 'live') return `实况${item.live_photo?.length ? ` ${item.live_photo.length}项` : ''}`;
+  if (item.processing?.audioOnly || item.music?.url && !item.url) return '音频';
   return '视频';
 }
 
@@ -351,7 +351,6 @@ function makePopup(): string {
         </div>
       </div>
       <div class="bdl-extra-downloads" id="bdl-extra-downloads"></div>
-      <section class="bdl-section bdl-routes" id="bdl-routes" hidden></section>
       <div class="bdl-tips" id="bdl-tips" style="display:none;">
         <div class="bdl-tips-title">提示</div>
         <div id="bdl-tips-content"></div>
@@ -439,6 +438,11 @@ export const UI = {
   suppressNextEntryClick: false,
   circleProgressValue: 0,
   entryProgressActive: false,
+
+  hasExistingPanel(): boolean {
+    const host = document.getElementById('bdl-shadow-host');
+    return Boolean(host?.shadowRoot?.getElementById('bdl-panel'));
+  },
 
   init(): void {
     this.createPanel();
@@ -539,7 +543,6 @@ export const UI = {
       audioCodec: g('bdl-audio-codec'),
       methods: g('bdl-methods'),
       extraDownloads: g('bdl-extra-downloads'),
-      routes: g('bdl-routes'),
       progress: g('bdl-progress'),
       progressVideo: g('bdl-progress-video'),
       progressVideoText: g('bdl-progress-video-text'),
@@ -1411,6 +1414,7 @@ export const UI = {
       const top = parseFloat(popup.style.top) || 0;
       this.popupManualPosition = { left, top };
     }
+    this.scrollCurrentItemsIntoView();
     this.syncEntryProgressVisibility();
   },
 
@@ -1772,7 +1776,30 @@ export const UI = {
     if (data.type === 'image') return `下载图集${data.images?.length ? ` (${data.images.length})` : ''}`;
     if (data.type === 'live') return `下载实况图${data.live_photo?.length ? ` (${data.live_photo.length})` : ''}`;
     if (data.music?.url && !data.url) return '下载音频';
+    if (data.processing?.audioOnly) return '下载音频';
     return '下载视频';
+  },
+
+  scrollCurrentItemsIntoView(): void {
+    requestAnimationFrame(() => {
+      if (!this.isPopupVisible()) return;
+
+      for (const name of ['pages', 'ugc']) {
+        const section = this.elements[`${name}Section`] as HTMLElement | undefined;
+        const list = this.elements[`${name}List`] as HTMLElement | undefined;
+        if (!section?.classList.contains('show') || !list?.clientHeight) continue;
+
+        const item = list.querySelector<HTMLElement>('.bdl-page-item.active');
+        if (!item) continue;
+
+        // offsetTop is relative to the positioned popup, not this scroll container.
+        // Use both elements' actual positions, accounting for the opening animation's scale.
+        const listRect = list.getBoundingClientRect();
+        const scaleY = list.offsetHeight ? listRect.height / list.offsetHeight : 1;
+        if (scaleY <= 0) continue;
+        list.scrollTop += (item.getBoundingClientRect().top - listRect.top) / scaleY - list.clientTop;
+      }
+    });
   },
 
   preparePagesSection(pages: PageInfo[], currentIndex: number, onUpdate: () => void): void {
@@ -1826,6 +1853,7 @@ export const UI = {
     });
 
     onUpdate();
+    this.scrollCurrentItemsIntoView();
   },
 
   prepareUGCSection(episodes: UGCEpisode[], onUpdate: () => void, currentCid?: number): void {
@@ -1886,29 +1914,9 @@ export const UI = {
 
     onUpdate();
 
-    // 保持原来的展开状态；初次加载时自动展开并定位到当前播放项
-    if (!wasVisible) {
-      if (currentItem) {
-        // 第一次：自动展开并定位
-        this.elements.ugcSection.classList.add('show');
-        requestAnimationFrame(() => {
-          const list = this.elements.ugcList as HTMLElement;
-          const item = currentItem as HTMLElement;
-          list.scrollTop = item.offsetTop - list.clientHeight / 2 + item.clientHeight / 2;
-        });
-      }
-      // currentItem が無い場合は閉じたままにする（既存動作維持）
-    } else {
-      // すでに展開済みなら展開状態を維持、定位だけ行う
-      this.elements.ugcSection.classList.add('show');
-      if (currentItem) {
-        requestAnimationFrame(() => {
-          const list = this.elements.ugcList as HTMLElement;
-          const item = currentItem as HTMLElement;
-          list.scrollTop = item.offsetTop - list.clientHeight / 2 + item.clientHeight / 2;
-        });
-      }
-    }
+    // 保持原来的展开状态；初次加载时自动展开并定位到当前播放项。
+    if (wasVisible || currentItem) this.elements.ugcSection.classList.add('show');
+    this.scrollCurrentItemsIntoView();
   },
 
   toggleExtendedSections(): void {
@@ -1923,6 +1931,7 @@ export const UI = {
 
     if (this.pagesSectionEnabled) this.elements.pagesSection.classList.add('show');
     if (this.ugcSectionEnabled) this.elements.ugcSection.classList.add('show');
+    this.scrollCurrentItemsIntoView();
   },
 
   resetFooterSecret(): void {
@@ -1970,7 +1979,6 @@ export const UI = {
   },
 
   setBilibiliMode(): void {
-    if (this.elements.routes) this.elements.routes.hidden = true;
     this.elements.download.style.display = '';
     this.hideShortVideoItems();
     this.setGifFormatVisible(false);
@@ -1986,9 +1994,7 @@ export const UI = {
   },
 
   setShortVideoMode(platform: ShortVideoPlatform): void {
-    const externalOnly = !!PLATFORMS[platform].externalOnly;
-    this.elements.download.style.display = externalOnly ? 'none' : '';
-    this.updateDownloadRoutes(platform);
+    this.elements.download.style.display = '';
     this.hidePagesSection();
     this.hideUGCSection();
     this.hideShortVideoItems();
@@ -2008,16 +2014,6 @@ export const UI = {
     setHTML(this.elements.duration, '<span class="bdl-meta-label">类型</span><span>短视频/图集</span>');
     setHTML(this.elements.vip, `<span class="bdl-vip-badge site">${getPlatformLabel(platform)}</span>`);
     this.setPrimaryButtonLabel('解析内容');
-    if (externalOnly) {
-      this.elements.title.textContent = `${getPlatformLabel(platform)} 下载`;
-      this.elements.title.title = this.elements.title.textContent;
-      this.elements.author.textContent = '选择下载网站后继续';
-      this.elements.duration.textContent = '外部下载';
-    }
-  },
-
-  updateDownloadRoutes(platform: ShortVideoPlatform, sourceUrl = location.href): void {
-    if (this.elements.routes) renderRouteSection(this.elements.routes, platform, sourceUrl, !!PLATFORMS[platform].externalOnly);
   },
 
   resetSectionsVisibility(): void {

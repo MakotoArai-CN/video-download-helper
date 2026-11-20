@@ -8,6 +8,8 @@ import type { KuaishouPhoto } from './kuaishou-interceptor.ts';
 import { PLATFORMS } from './platforms.ts';
 import type { ShortVideoApiResponse, ShortVideoAuthor, ShortVideoData, ShortVideoPlatform } from './types.ts';
 import { XAPI } from './x-api.ts';
+import { parseYouTube } from './youtube-api.ts';
+import { parseNativePlatform } from './native-platforms.ts';
 
 type RawShortVideoData = Record<string, any>;
 
@@ -930,7 +932,17 @@ async function parseToutiaoLocal(url: string): Promise<ShortVideoData | null> {
  * 表放在本文件而非 platforms.ts：解析器实现依赖本文件的辅助函数，
  * 反向引用会形成循环导入。platforms.ts 只承载数据，不承载行为。
  */
-const PARSERS: Partial<Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoData | null>>> = {
+const PARSERS: Record<ShortVideoPlatform, (url: string) => Promise<ShortVideoData | null>> = {
+  youtube: parseYouTube,
+  tiktok: url => parseNativePlatform(url, 'tiktok'),
+  instagram: url => parseNativePlatform(url, 'instagram'),
+  facebook: url => parseNativePlatform(url, 'facebook'),
+  threads: url => parseNativePlatform(url, 'threads'),
+  pinterest: url => parseNativePlatform(url, 'pinterest'),
+  snapchat: url => parseNativePlatform(url, 'snapchat'),
+  ted: url => parseNativePlatform(url, 'ted'),
+  twitch: url => parseNativePlatform(url, 'twitch'),
+  soundcloud: url => parseNativePlatform(url, 'soundcloud'),
   douyin: url => ShortVideoAPI.parseDouyinLocal(url),
 
   kuaishou: async url => {

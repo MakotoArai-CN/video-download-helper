@@ -1,24 +1,4 @@
 export const STYLES = `
-        .bdl-routes[hidden] { display: none; }
-        .bdl-route-note { margin: 8px 0; color: var(--bdl-text-sub); font-size: 12px; line-height: 1.6; }
-        .bdl-route-controls { display: flex; flex-wrap: wrap; gap: 8px; }
-        .bdl-route-controls select {
-            min-width: 0; flex: 1 1 135px; padding: 8px; border-radius: 8px;
-            border: 1px solid var(--bdl-border); background: var(--bdl-surface); color: var(--bdl-text); font: inherit;
-        }
-        .bdl-route-open {
-            display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; padding: 8px 12px;
-            background: var(--bdl-brand); color: var(--bdl-brand-contrast); text-decoration: none; font-size: 13px;
-        }
-        .bdl-route-open:hover { background: var(--bdl-brand-deep); }
-        .bdl-route-check {
-            margin-top: 8px; padding: 5px 0; border: 0; background: transparent;
-            color: var(--bdl-text-sub); cursor: pointer; font: inherit; font-size: 12px;
-        }
-        .bdl-route-check:disabled { opacity: .6; cursor: wait; }
-        .bdl-route-open:focus-visible, .bdl-route-check:focus-visible, .bdl-route-controls select:focus-visible {
-            outline: 2px solid var(--bdl-brand); outline-offset: 2px;
-        }
         :host {
             all: initial;
             color-scheme: light;

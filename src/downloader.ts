@@ -2,7 +2,8 @@ import { Utils } from './utils.ts';
 import { BiliAPI } from './api.ts';
 import { ShortVideoAPI } from './short-video-api.ts';
 import { MergeManager } from './merge-manager.ts';
-import { JSMerger } from './merger.ts';
+import { JSMerger, remuxLocalMedia } from './merger.ts';
+import { downloadStream } from './stream-media.ts';
 import { GifManager } from './gif-manager.ts';
 import { ThreadManager } from './thread-manager.ts';
 import { CompleteEffect } from './complete-effect.ts';
@@ -194,19 +195,6 @@ export const Downloader = {
     this.hasDanmaku = false;
     this.currentPlatform = platform;
 
-    if (PLATFORMS[platform].externalOnly) {
-      this.shortVideoInfo = null;
-      this.shortVideoItems = [];
-      this.shortVideoPageUrl = null;
-      this.shortItemsAreAlternatives = false;
-      this.selectedShortVideoIndex = 0;
-      this.initShortVideoSelection();
-      UI.setShortVideoMode(platform);
-      UI.setExtraActions([]);
-      UI.hideAlert();
-      UI.positionPopup();
-      return Promise.resolve(false);
-    }
     this.coverUrl = null;
 
     return ShortVideoAPI.parseUrl(pageUrl, platform).then(data => {
@@ -254,11 +242,6 @@ export const Downloader = {
   renderShortVideoInfo(platform: ShortVideoPlatform): void {
     if (!this.shortVideoInfo) return;
     UI.updateShortVideoInfo(this.shortVideoInfo, platform);
-    const item = this.shortVideoInfo;
-    const routeSource = platform === 'douyin' && item.video_id
-      ? `https://www.douyin.com/${item.type === 'image' || item.type === 'live' ? 'note' : 'video'}/${item.video_id}`
-      : item.sourceUrl || this.shortVideoPageUrl || location.href;
-    UI.updateDownloadRoutes(platform, routeSource);
     UI.prepareShortVideoItems(this.shortVideoItems, {
       previewIndex: this.selectedShortVideoIndex,
       selectedItems: this.shortSelectedItems,
@@ -503,8 +486,10 @@ export const Downloader = {
       return [{
         candidates,
         ...(item.audio_url ? { audioCandidates: [item.audio_url] } : {}),
-        filename: `${base}.${convert ? 'gif' : Utils.inferExtension(candidates[0], 'mp4')}`,
-        label: item.animated ? 'GIF' : '视频',
+        ...(item.processing ? { processing: item.processing } : {}),
+        outputExt: item.output_ext || (item.processing?.audioOnly ? 'm4a' : 'mp4'),
+        filename: `${base}.${convert ? 'gif' : item.output_ext || (item.processing ? 'mp4' : Utils.inferExtension(candidates[0], 'mp4'))}`,
+        label: item.processing?.audioOnly ? '音频' : item.animated ? 'GIF' : '视频',
         ...(convert ? { convert } : {})
       }];
     }
@@ -594,6 +579,7 @@ export const Downloader = {
     this.isDownloading = true;
     UI.setDownloading(true);
     UI.showProgress(true);
+    UI.updateDownloadButtonProgress(0, '正在获取下载地址...');
     UI.hideAlert();
 
     const allTasks: Array<{ type: string; index: number; data: any }> = [];
@@ -805,23 +791,34 @@ export const Downloader = {
 
       UI.updateProgress('video', 0, '下载视频...');
       UI.updateCircleProgress(0);
+      let videoPercent = 0;
+      let audioPercent = 0;
+      const updateDownloadProgress = (type: 'video' | 'audio', percent: number) => {
+        if (type === 'video') videoPercent = percent;
+        else audioPercent = percent;
+        const overall = audioUrls ? Math.round((videoPercent + audioPercent) * 0.4) : videoPercent;
+        UI.updateDownloadButtonProgress(overall, `下载${type === 'video' ? '视频' : '音频'} ${percent}%`);
+      };
 
       return ThreadManager.downloadWithThread(
         videoUrls,
         audioUrls,
         (loaded, total) => {
-          const percent = Math.round(loaded / total * 100);
+          const percent = total > 0 ? Math.round(loaded / total * 100) : 0;
           UI.updateProgress('video', percent);
           UI.updateCircleProgress(audioUrls ? percent * 0.4 : percent);
+          updateDownloadProgress('video', percent);
         },
         (loaded, total) => {
-          const percent = Math.round(loaded / total * 100);
+          const percent = total > 0 ? Math.round(loaded / total * 100) : 0;
           UI.updateProgress('audio', percent);
           UI.updateCircleProgress(40 + percent * 0.4);
+          updateDownloadProgress('audio', percent);
         }
       ).then(buffers => {
         UI.updateProgress('video', 100);
         if (buffers.audioBuffer) UI.updateProgress('audio', 100);
+        UI.updateDownloadButtonProgress(audioUrls ? 80 : 100, audioUrls ? '视频与音频已下载，准备合并' : '下载完成');
         return buffers;
       });
     }).then(buffers => {
@@ -849,12 +846,15 @@ export const Downloader = {
         this.saveSeparate(buffers.videoBuffer, buffers.audioBuffer, filename);
       } else if (buffers.audioBuffer && MergeManager.currentMethod !== CONFIG.MERGE_METHODS.SEPARATE) {
         UI.updateProgress('merge', 0, '合并中...');
+        UI.updateDownloadButtonProgress(80, '合并中...');
         return MergeManager.merge(buffers.videoBuffer, buffers.audioBuffer, metadata).then(result => {
           if (result.separate) {
+            UI.updateDownloadButtonProgress(100, '准备分别保存');
             this.saveSeparate(buffers.videoBuffer, buffers.audioBuffer!, filename);
           } else {
             UI.updateProgress('merge', 100);
             UI.updateCircleProgress(100);
+            UI.updateDownloadButtonProgress(100, '下载完成');
             this.saveFile(result.data!, filename + '.mp4');
           }
         }).catch(mergeError => {
@@ -1023,26 +1023,40 @@ export const Downloader = {
       return task;
     };
 
-    const tasks = units.map((unit, index) => ThreadManager.runTask(
-      () => this.fetchBlobCandidates(unit.candidates, platform, percent => {
+    const fetchUnit = (unit: MediaUnit, index: number): Promise<Blob> => {
+      const progress = (percent: number) => {
         percents[index] = percent;
         report();
-      })
-    ).then(async blob => {
-      if (!unit.audioCandidates?.length) return blob;
-      const audio = await ThreadManager.runTask(() => this.fetchBlobCandidates(unit.audioCandidates!, platform, () => {}));
-      if (blob.size + audio.size > CONFIG.MAX_MERGE_BYTES) throw new Error('音视频过大，无法在浏览器内合并');
+      };
+      if (unit.processing && unit.processing.kind !== 'remux') {
+        const task = convertChain.then(() => downloadStream(unit.candidates[0], unit.processing!, ShortVideoAPI.getMediaHeaders(platform), unit.outputExt, progress));
+        convertChain = task.then(() => {}, () => {});
+        return task;
+      }
+      return ThreadManager.runTask(() => this.fetchBlobCandidates(unit.candidates, platform, progress));
+    };
+    const tasks = units.map((unit, index) => fetchUnit(unit, index).then(async blob => {
+      if (!unit.audioCandidates?.length && unit.processing?.kind !== 'remux') return blob;
+      const audio = unit.audioCandidates?.length ? await ThreadManager.runTask(() => this.fetchBlobCandidates(unit.audioCandidates!, platform, () => {})) : null;
+      if (blob.size + (audio?.size || 0) > CONFIG.MAX_MERGE_BYTES) throw new Error('音视频过大，无法在浏览器内合并');
       // 与 GIF 转码共用串行队列，避免多个大视频同时占用合并内存。
       const task = convertChain.then(async () => {
         convertLabel = '合并音视频';
         report();
         const videoBuffer = await blob.arrayBuffer();
-        const audioBuffer = await audio.arrayBuffer();
-        if (!JSMerger.findBox(JSMerger.parseBoxes(audioBuffer), 'moov')) throw new Error('音轨文件结构不完整');
-        const result = await JSMerger.merge(videoBuffer, audioBuffer, {
-          title: zipName, author: '', description: '', duration: 0
-        });
-        return new Blob([result], { type: 'video/mp4' });
+        const audioBuffer = audio ? await audio.arrayBuffer() : null;
+        if (unit.processing?.kind !== 'remux' && audioBuffer) {
+          if (!JSMerger.findBox(JSMerger.parseBoxes(audioBuffer), 'moov')) throw new Error('音轨文件结构不完整');
+          try {
+            const result = await JSMerger.merge(videoBuffer, audioBuffer, { title: zipName, author: '', description: '', duration: 0 });
+            return new Blob([result], { type: 'video/mp4' });
+          } catch { /* 本地 JS 合并不支持的封装交给 WASM。 */ }
+        }
+        if (blob.size + (audio?.size || 0) > CONFIG.MAX_FFMPEG_MERGE_BYTES) throw new Error('媒体超过 WASM 内存限制');
+        const files = [{ name: 'video.bin', data: new Uint8Array(videoBuffer) }];
+        if (audioBuffer) files.push({ name: 'audio.bin', data: new Uint8Array(audioBuffer) });
+        const result = await remuxLocalMedia(files, files.map(file => file.name), unit.outputExt || 'mp4', unit.processing?.audioOnly);
+        return new Blob([result as BlobPart], { type: 'video/mp4' });
       });
       convertChain = task.then(() => { convertLabel = ''; }, () => { convertLabel = ''; });
       return task;
@@ -1227,6 +1241,7 @@ export const Downloader = {
   },
 
   saveSeparate(videoBuffer: ArrayBuffer, audioBuffer: ArrayBuffer, filename: string): void {
+    UI.updateDownloadButtonProgress(100, '准备分别保存');
     this.saveFile(videoBuffer, filename + '_video.mp4');
     setTimeout(() => this.saveFile(audioBuffer, filename + '_audio.m4a'), 500);
   },

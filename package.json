@@ -16,5 +16,10 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "quickjs-emscripten-core": "0.32.0",
+    "youtubei.js": "18.1.0"
   }
 }

@@ -8,7 +8,7 @@ export const BiliAPI = {
   getUserInfo(): Promise<number> {
     return Network.fetchJSON('https://api.bilibili.com/x/web-interface/nav').then(res => {
       if (res.code === 0 && res.data) {
-        if (res.data.vipStatus === 1 && res.data.vipType === 2) this.userVipType = 2;
+        if (Number(res.data.vipStatus) === 1 && Number(res.data.vipType) > 0) this.userVipType = 2;
         else if (res.data.isLogin) this.userVipType = 1;
         else this.userVipType = 0;
       }

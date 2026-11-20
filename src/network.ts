@@ -129,6 +129,10 @@ export const Network = {
               reject(new Error('下载失败: 响应体为空'));
               return;
             }
+            if (/^(?:text\/html|application\/json)/i.test(blob.type)) {
+              reject(new Error('原站返回了登录或错误页面，未保存为媒体文件'));
+              return;
+            }
             resolve(blob);
           } else reject(new Error('下载失败: ' + res.status));
         },
