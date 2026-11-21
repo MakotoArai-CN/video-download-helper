@@ -19,7 +19,7 @@ type Listener = (entries: DiagnosticEntry[]) => void;
 
 const MAX_ENTRIES = 300;
 const REPO_ISSUE_URL = 'https://github.com/MakotoArai-CN/video-download-helper/issues/new';
-const SCRIPT_VERSION = typeof GM_info !== 'undefined' && GM_info?.script?.version ? GM_info.script.version : '0.2.7';
+const SCRIPT_VERSION = typeof GM_info !== 'undefined' && GM_info?.script?.version ? GM_info.script.version : '0.2.8';
 
 function safeStringify(value: unknown): string {
   if (value === null || value === undefined) return String(value);

@@ -784,7 +784,85 @@ async function parseWeiboLocal(url: string): Promise<ShortVideoData | null> {
 // ---------------------------------------------------------------------------
 // 今日头条本地解析
 // ---------------------------------------------------------------------------
+function decodeToutiaoMediaUrl(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const direct = normalizeUrl(value);
+  if (direct) return direct;
+  try {
+    const decoded = decodeURIComponent(value);
+    return normalizeUrl(decoded) || normalizeUrl(atob(decoded));
+  } catch {
+    return '';
+  }
+}
+
+function parseToutiaoRenderData(url: string): ShortVideoData | null {
+  const source = document.getElementById('RENDER_DATA')?.textContent?.trim();
+  const currentId = new URL(url).pathname.match(/^\/video\/(\d+)/)?.[1];
+  if (!source || !currentId) return null;
+
+  let data: RawShortVideoData;
+  try {
+    data = JSON.parse(source.startsWith('{') ? source : decodeURIComponent(source));
+  } catch {
+    return null;
+  }
+  if (!isRecord(data)) return null;
+  // Recommendations share this payload; only read the current video's node.
+  const current = data.data?.initialVideo;
+  if (!current || String(current.groupId || current.group_id || current.itemId) !== currentId) return null;
+
+  let playInfo = current.videoPlayInfo;
+  if (typeof playInfo === 'string') {
+    try { playInfo = JSON.parse(playInfo); } catch { return null; }
+  }
+  const dynamic = playInfo?.dynamic_video;
+  const videos = Array.isArray(dynamic?.dynamic_video_list) ? dynamic.dynamic_video_list : [];
+  const audios = Array.isArray(dynamic?.dynamic_audio_list) ? dynamic.dynamic_audio_list : [];
+  const urls = (stream: RawShortVideoData | undefined): string[] => unique([
+    decodeToutiaoMediaUrl(stream?.main_url),
+    ...[stream?.backup_url].flat().map(decodeToutiaoMediaUrl)
+  ]);
+  const available = videos.filter((stream: RawShortVideoData) => urls(stream).length);
+  if (!available.length) return null;
+
+  // MSE exposes a blob URL on <video>. Match its actual media requests instead.
+  const media = getBestVisibleVideo();
+  const requests = [media?.currentSrc || media?.src || '', ...performance.getEntriesByType('resource')
+    .slice().reverse().map(entry => entry.name)];
+  let selected = available[0];
+  for (const request of requests) {
+    const match = available.find((stream: RawShortVideoData) => urls(stream).includes(request));
+    if (match) { selected = match; break; }
+  }
+  const videoUrls = urls(selected);
+  const audio = audios.slice().sort((a: RawShortVideoData, b: RawShortVideoData) =>
+    Number(b.audio_meta?.bitrate || 0) - Number(a.audio_meta?.bitrate || 0)
+  ).find((stream: RawShortVideoData) => urls(stream).length);
+  const audioUrls = urls(audio);
+  if (!audioUrls.length) return null;
+
+  return {
+    type: 'video',
+    title: current.title || document.title.replace(/[-|]?\s*今日头条.*$/i, '').trim(),
+    desc: '',
+    author: { name: current.userInfo?.name || '' },
+    cover: normalizeUrl(current.coverUrl || current.poster),
+    duration: Number(playInfo.video_duration || current.duration) * 1000 || null,
+    url: videoUrls[0],
+    video_backup: videoUrls.slice(1),
+    audio_url: audioUrls[0],
+    output_ext: 'mp4',
+    video_id: currentId,
+    platform: 'toutiao',
+    sourceUrl: url
+  };
+}
+
 function parseToutiaoWindowState(url: string): ShortVideoData | null {
+  const rendered = parseToutiaoRenderData(url);
+  if (rendered) return rendered;
+
   const win = getPageWindow();
   const stateKeys = ['__INITIAL_STATE__', 'SSR_HYDRATION_DATA', '__pageData', 'detailSSRData', '__tt_spa_initial_state__', 'APP_INITIAL_DATA', 'PAGE_SSR_DATA'];
 

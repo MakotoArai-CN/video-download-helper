@@ -274,6 +274,8 @@ export const PLATFORMS: Record<ShortVideoPlatform, PlatformDef> = {
     hosts: ['toutiao.com'],
     mediaReferer: 'https://www.toutiao.com/',
     mediaOrigin: 'https://www.toutiao.com',
+    // Use the same page network context as the player; extension requests can fail on this CDN.
+    pageContextMedia: /(?:^|\.)toutiaovod\.com$/i,
     brand: {
       brand: '#FF403A',
       brandDeep: '#E02722',

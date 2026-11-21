@@ -92,7 +92,7 @@ export default defineConfig({
       userscript: {
         name: '视频下载助手 - 多平台',
         namespace: 'https://github.com/MakotoArai-CN/video-download-helper',
-        version: '0.2.7',
+        version: '0.2.8',
         description:
           '支持哔哩哔哩、抖音、快手、小红书、YouTube、TikTok、Instagram、X、Reddit 等平台，使用页面数据与原站接口在本地解析、下载及合并媒体。',
         author: 'Makoto',
@@ -102,6 +102,7 @@ export default defineConfig({
         grant: ['GM_xmlhttpRequest', 'GM_addStyle', 'GM_getValue', 'GM_setValue', 'unsafeWindow'],
         connect: [
           'api.bilibili.com',
+          'unpkg.com',
           'bilivideo.com',
           'bilivideo.cn',
           'bilivideo.net',
